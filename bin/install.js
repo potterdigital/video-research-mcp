@@ -76,25 +76,57 @@ async function promptMode() {
   });
 }
 
-/** Check for uv and python3 — warn if missing, never block. */
+/**
+ * Check runtime prerequisites — warn if missing, never block.
+ *
+ * `required: true`  — the MCP server cannot start without these.
+ * `required: false` — only needed by specific commands (yt-dlp for /gr:video
+ * YouTube downloads, ffmpeg for frame extraction in /gr:video and
+ * /gr:video-chat). Missing optional deps cause graceful degradation, not
+ * failure: `/gr:video` skips the local download and frame extraction.
+ */
 function checkPrereqs() {
-  const checks = [];
-  // Safe: hardcoded commands, no user input
-  try {
-    execSync('uv --version', { stdio: 'pipe' });
-    checks.push({ name: 'uv', ok: true });
-  } catch {
-    checks.push({
+  const PROBES = [
+    {
       name: 'uv',
-      ok: false,
+      cmd: 'uv --version',
+      required: true,
       hint: 'Install from https://docs.astral.sh/uv/',
-    });
-  }
-  try {
-    execSync('python3 --version', { stdio: 'pipe' });
-    checks.push({ name: 'python3', ok: true });
-  } catch {
-    checks.push({ name: 'python3', ok: false, hint: 'Python >= 3.11 required' });
+    },
+    {
+      name: 'python3',
+      cmd: 'python3 --version',
+      required: true,
+      hint: 'Python >= 3.11 required',
+    },
+    {
+      name: 'yt-dlp',
+      cmd: 'yt-dlp --version',
+      required: false,
+      hint: 'Install with: uv tool install yt-dlp (needed for /gr:video to download YouTube videos for frame extraction)',
+    },
+    {
+      name: 'ffmpeg',
+      cmd: 'ffmpeg -version',
+      required: false,
+      hint: 'Install with: brew install ffmpeg / apt install ffmpeg (needed for video frame extraction in /gr:video and /gr:video-chat)',
+    },
+  ];
+
+  const checks = [];
+  for (const probe of PROBES) {
+    try {
+      // Safe: hardcoded commands, no user input
+      execSync(probe.cmd, { stdio: 'pipe' });
+      checks.push({ name: probe.name, ok: true, required: probe.required });
+    } catch {
+      checks.push({
+        name: probe.name,
+        ok: false,
+        required: probe.required,
+        hint: probe.hint,
+      });
+    }
   }
   return checks;
 }
@@ -183,8 +215,10 @@ async function install(mode, force, forceMcpOverwrite) {
   for (const p of prereqs) {
     if (p.ok) {
       ui.success(`${p.name} found`);
-    } else {
+    } else if (p.required) {
       ui.warn(`${p.name} not found \u2014 ${p.hint}`);
+    } else {
+      ui.info(`${p.name} not found (optional) \u2014 ${p.hint}`);
     }
   }
   ui.blank();

@@ -38,7 +38,13 @@ npx video-research-mcp@latest --uninstall  # clean removal
 npx video-research-mcp@latest --local      # install for this project only
 ```
 
-Requires Python >= 3.11, [uv](https://docs.astral.sh/uv/), [Node.js](https://nodejs.org/) >= 16, and a [Google AI API key](https://aistudio.google.com/apikey).
+**Required:** Python >= 3.11, [uv](https://docs.astral.sh/uv/), [Node.js](https://nodejs.org/) >= 16, and a [Google AI API key](https://aistudio.google.com/apikey).
+
+**Optional (recommended for `/gr:video` and `/gr:video-chat`):**
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — downloads YouTube videos to a local cache so frames can be extracted. Install with `uv tool install yt-dlp`.
+- [`ffmpeg`](https://ffmpeg.org/) — extracts frames at visually important moments for the analysis output. Install with `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Debian/Ubuntu).
+
+Without these, video analysis still works against the Gemini API; only the local download + frame extraction step is skipped. The installer's `--check` mode reports which optional tools are missing.
 
 ## What it does
 
