@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from video_research_mcp.local_path_policy import (
+    SensitivePathError,
     enforce_local_access_root,
     resolve_path,
 )
@@ -137,3 +138,130 @@ class TestUnconfigured:
 
         result = enforce_local_access_root(resolve_path(str(f)))
         assert result == f.resolve()
+
+
+class TestSensitivePathDenyList:
+    """Sensitive paths are denied even inside an allowed root (defence in depth).
+
+    Each test names the specific bug it guards against so a future reader can
+    verify the test still earns its keep.
+    """
+
+    def _allow_tmp(self, tmp_path, monkeypatch):
+        """Configure the server so *tmp_path* is an allowed access root."""
+        monkeypatch.setenv("LOCAL_FILE_ACCESS_ROOTS", str(tmp_path))
+
+    @pytest.mark.parametrize(
+        "subpath, basename",
+        [
+            (".ssh", "id_rsa"),
+            (".ssh", "id_ed25519"),
+            (".aws", "credentials"),
+            (".gnupg", "secring.gpg"),
+            (".docker", "config.json"),
+            (".kube", "config"),
+            (".config/gh", "hosts.yml"),
+            (".config/git", "credentials"),
+        ],
+    )
+    def test_sensitive_directory_part_denied(
+        self, tmp_path, monkeypatch, clean_config, subpath, basename
+    ):
+        # Guards: a malicious or accidental tool call on common credential
+        # directories must not succeed even when the parent dir is allowed.
+        target_dir = tmp_path / subpath
+        target_dir.mkdir(parents=True)
+        f = target_dir / basename
+        f.write_text("secret")
+        self._allow_tmp(tmp_path, monkeypatch)
+
+        with pytest.raises(SensitivePathError, match="sensitive-path deny-list"):
+            enforce_local_access_root(resolve_path(str(f)))
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "server.pem",
+            "private.key",
+            "id_rsa",
+            "id_ed25519.pub",
+            "id_ecdsa",
+            "id_dsa",
+            "vault.kdbx",
+            "secret.gpg",
+            "cert.p12",
+            "cert.pfx",
+            "credentials",
+            "credentials.json",
+            ".env",
+            ".env.production",
+            ".netrc",
+            ".npmrc",
+            ".pypirc",
+            "htpasswd",
+            "release.keystore",
+            "android.jks",
+        ],
+    )
+    def test_sensitive_filename_pattern_denied(
+        self, tmp_path, monkeypatch, clean_config, filename
+    ):
+        # Guards: even a sensitive filename in an otherwise-allowed directory
+        # must trigger the deny-list (not just paths under ~/.ssh).
+        f = tmp_path / filename
+        f.write_text("secret")
+        self._allow_tmp(tmp_path, monkeypatch)
+
+        with pytest.raises(SensitivePathError):
+            enforce_local_access_root(resolve_path(str(f)))
+
+    def test_sensitive_path_denied_even_when_no_roots_configured(
+        self, tmp_path, monkeypatch, clean_config
+    ):
+        # Guards: the deny-list is a hard floor — applies even when the
+        # operator forgot to set LOCAL_FILE_ACCESS_ROOTS at all.
+        monkeypatch.delenv("LOCAL_FILE_ACCESS_ROOT", raising=False)
+        monkeypatch.delenv("LOCAL_FILE_ACCESS_ROOTS", raising=False)
+        target_dir = tmp_path / ".ssh"
+        target_dir.mkdir()
+        f = target_dir / "id_rsa"
+        f.write_text("secret")
+
+        with pytest.raises(SensitivePathError):
+            enforce_local_access_root(resolve_path(str(f)))
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "notes-about-ssh.txt",  # contains 'ssh' but not a sensitive part
+            "my.envelope.txt",  # starts with '.env' substring but not pattern
+            "keystore-notes.md",  # contains 'keystore' but no .keystore ext
+            "credit-report.pdf",  # contains 'cred' but not 'credentials*'
+            "readme.md",
+            "video.mp4",
+        ],
+    )
+    def test_benign_filenames_allowed(
+        self, tmp_path, monkeypatch, clean_config, filename
+    ):
+        # Guards: deny-list must not over-match. A future change that uses
+        # naive substring matching ("env" in name) would fail here.
+        f = tmp_path / filename
+        f.write_text("ok")
+        self._allow_tmp(tmp_path, monkeypatch)
+
+        result = enforce_local_access_root(resolve_path(str(f)))
+        assert result == f.resolve()
+
+    def test_sensitive_error_is_permissionerror_subclass(self):
+        # Guards: existing call sites catch PermissionError; the deny-list
+        # error must remain a subclass so generic handlers still work.
+        assert issubclass(SensitivePathError, PermissionError)
+
+    def test_sensitive_error_categorizes_distinctly(self):
+        # Guards: SENSITIVE_PATH_DENIED maps to its own ErrorCategory rather
+        # than collapsing into the generic PERMISSION_DENIED bucket.
+        from video_research_mcp.errors import ErrorCategory, categorize_error
+
+        cat, _ = categorize_error(SensitivePathError("test"))
+        assert cat is ErrorCategory.SENSITIVE_PATH_DENIED
