@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
@@ -59,8 +60,31 @@ app.mount(youtube_server)
 app.mount(knowledge_server)
 
 
+def _warn_if_no_local_access_roots() -> None:
+    """Emit a single startup warning when no local-file allow-list is configured.
+
+    Tools that read local files accept LLM-supplied paths. When the LLM is
+    influenced by untrusted content (web pages, transcripts), an unrestricted
+    server is a credential-exfiltration risk. The deny-list still blocks the
+    obvious credential paths, but a positive allow-list is the recommended
+    posture.
+    """
+    cfg = get_config()
+    if cfg.local_file_access_roots:
+        return
+    logger.warning(
+        "LOCAL_FILE_ACCESS_ROOTS is not set — local file tools will accept "
+        "any path the OS user can read (the sensitive-path deny-list still "
+        "applies). Set LOCAL_FILE_ACCESS_ROOTS=<dir>[%s<dir>...] to restrict "
+        "the server to specific directories. See README 'Local file access "
+        "boundaries' for details.",
+        os.pathsep,
+    )
+
+
 def main() -> None:
     """Entry-point for ``video-research-mcp`` console script."""
+    _warn_if_no_local_access_roots()
     app.run()
 
 

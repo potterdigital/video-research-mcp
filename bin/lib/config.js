@@ -166,6 +166,7 @@ const ENV_TEMPLATE_KEYS = [
   'OPENAI_API_KEY',
   'WEAVIATE_VECTORIZER',
   'WEAVIATE_AUTO_MIGRATE',
+  'LOCAL_FILE_ACCESS_ROOTS',
 ];
 
 /**
@@ -226,6 +227,14 @@ function ensureEnvFile() {
       '',
       '# Optional — OpenAI TTS (budget alternative)',
       '# OPENAI_API_KEY=',
+      '',
+      '# Strongly recommended — restrict which directories the server can read.',
+      '# Tools that ingest local files accept paths supplied by the LLM, so',
+      '# untrusted content (web pages, transcripts) can induce reads of files',
+      '# you did not intend. Configure an OS-pathsep-separated allow-list and',
+      '# the server will reject paths outside it. See README "Local file access',
+      '# boundaries" for details.',
+      '# LOCAL_FILE_ACCESS_ROOTS=' + path.join('${HOME}', 'dev') + path.delimiter + path.join('${HOME}', 'Downloads'),
       '',
     ];
     fs.writeFileSync(envPath, lines.join('\n'), { mode: 0o600 });
