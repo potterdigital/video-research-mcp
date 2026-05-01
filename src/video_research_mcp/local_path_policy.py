@@ -13,7 +13,10 @@ def resolve_path(path_value: str) -> Path:
 
 
 def enforce_local_access_root(path: Path) -> Path:
-    """Enforce LOCAL_FILE_ACCESS_ROOT boundary when configured.
+    """Enforce LOCAL_FILE_ACCESS_ROOTS boundary when configured.
+
+    Accepts the path if it falls under ANY configured access root. When no
+    roots are configured the path is returned unchanged (legacy behaviour).
 
     Args:
         path: Absolute filesystem path to validate.
@@ -22,16 +25,19 @@ def enforce_local_access_root(path: Path) -> Path:
         The original path when allowed.
 
     Raises:
-        PermissionError: If the path falls outside the configured access root.
+        PermissionError: If the path falls outside every configured access root.
     """
     cfg = get_config()
-    if not cfg.local_file_access_root:
+    roots = cfg.local_file_access_roots
+    if not roots:
         return path
 
-    root = Path(cfg.local_file_access_root).expanduser().resolve()
-    if not path.is_relative_to(root):
-        raise PermissionError(
-            f"Path '{path}' is outside LOCAL_FILE_ACCESS_ROOT '{root}'"
-        )
-    return path
+    resolved_roots = [Path(r).expanduser().resolve() for r in roots]
+    for root in resolved_roots:
+        if path.is_relative_to(root):
+            return path
 
+    roots_display = ", ".join(str(r) for r in resolved_roots)
+    raise PermissionError(
+        f"Path '{path}' is outside LOCAL_FILE_ACCESS_ROOTS [{roots_display}]"
+    )
