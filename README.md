@@ -42,6 +42,15 @@ You need **Node.js 22 or later**, **Python 3.11 or later**,
 [uv](https://docs.astral.sh/uv/getting-started/installation/), and a
 [Gemini API key](https://aistudio.google.com/apikey).
 
+Optional, recommended for `/gr:video` and `/gr:video-chat`:
+
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) downloads YouTube videos to a local cache so frames can be extracted. Install with `uv tool install yt-dlp`.
+- [`ffmpeg`](https://ffmpeg.org/) extracts frames at visually important moments for the analysis output. Install with `brew install ffmpeg` (macOS) or `apt install ffmpeg` (Debian/Ubuntu).
+
+Without these, video analysis still works against the Gemini API; only the local
+download and frame extraction step is skipped. The installer reports which optional
+tools are missing.
+
 ```bash
 npx video-research-mcp@latest
 ```
