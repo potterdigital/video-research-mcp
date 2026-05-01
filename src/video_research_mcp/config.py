@@ -98,6 +98,33 @@ def _normalize_weaviate_url(raw: str) -> str:
     return normalized if urlparse(normalized).hostname else ""
 
 
+def _parse_local_file_access_roots(plural_raw: str, singular_raw: str) -> list[str]:
+    """Parse LOCAL_FILE_ACCESS_ROOTS (preferred) or LOCAL_FILE_ACCESS_ROOT (legacy).
+
+    The plural form is an ``os.pathsep``-separated list of paths. The singular
+    form is supported for backwards compatibility and is treated as a
+    single-element list. Empty entries are dropped. Each path is expanded
+    (``~``) and resolved to an absolute path.
+    """
+    from pathlib import Path as _Path
+
+    raw_entries: list[str]
+    if plural_raw.strip():
+        raw_entries = plural_raw.split(os.pathsep)
+    elif singular_raw.strip():
+        raw_entries = [singular_raw]
+    else:
+        return []
+
+    resolved: list[str] = []
+    for entry in raw_entries:
+        cleaned = entry.strip()
+        if not cleaned:
+            continue
+        resolved.append(str(_Path(cleaned).expanduser().resolve()))
+    return resolved
+
+
 def _resolve_tracing_enabled(flag_value: str, tracking_uri: str) -> bool:
     """Derive tracing_enabled from env vars.
 
@@ -142,7 +169,7 @@ class ServerConfig(BaseModel):
     doc_max_download_bytes: int = Field(default=50 * 1024 * 1024)
     research_document_max_sources: int = Field(default=12)
     research_document_phase_concurrency: int = Field(default=4)
-    local_file_access_root: str = Field(default="")
+    local_file_access_roots: list[str] = Field(default_factory=list)
     deep_research_agent: str = Field(default="deep-research-preview-04-2026")
     weaviate_vectorizer: str = Field(default="openai")
     weaviate_auto_migrate: bool = Field(default=False)
@@ -216,9 +243,10 @@ class ServerConfig(BaseModel):
         from pathlib import Path
 
         cache_default = str(Path.home() / ".cache" / "video-research-mcp")
-        local_file_access_root = os.getenv("LOCAL_FILE_ACCESS_ROOT", "").strip()
-        if local_file_access_root:
-            local_file_access_root = str(Path(local_file_access_root).expanduser().resolve())
+        local_file_access_roots = _parse_local_file_access_roots(
+            os.getenv("LOCAL_FILE_ACCESS_ROOTS", ""),
+            os.getenv("LOCAL_FILE_ACCESS_ROOT", ""),
+        )
         weaviate_url = _normalize_weaviate_url(os.getenv("WEAVIATE_URL", ""))
         _cohere_key = os.environ.get("COHERE_API_KEY", "")
         _reranker_flag = os.getenv("RERANKER_ENABLED", "").lower()
@@ -262,7 +290,7 @@ class ServerConfig(BaseModel):
             research_document_phase_concurrency=int(
                 os.getenv("RESEARCH_DOCUMENT_PHASE_CONCURRENCY", "4")
             ),
-            local_file_access_root=local_file_access_root,
+            local_file_access_roots=local_file_access_roots,
             deep_research_agent=os.getenv("DEEP_RESEARCH_AGENT", "deep-research-preview-04-2026"),
             weaviate_vectorizer=(
                 _vectorizer_flag
