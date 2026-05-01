@@ -68,13 +68,55 @@ function readConfig(configPath) {
   }
 }
 
-/** Merge MCP_SERVERS into the config file. Creates the file if it doesn't exist. */
-function mergeConfig(configPath) {
+/** Deep-equal two MCP server entries (command + args). */
+function entriesEqual(a, b) {
+  if (!a || !b) return false;
+  if (a.command !== b.command) return false;
+  const aArgs = a.args || [];
+  const bArgs = b.args || [];
+  if (aArgs.length !== bArgs.length) return false;
+  return aArgs.every((v, i) => v === bArgs[i]);
+}
+
+/**
+ * Merge MCP_SERVERS into the config file.
+ *
+ * Existing user-configured entries are preserved by default — the installer
+ * only writes a server entry when it is absent or matches the planned values
+ * exactly. Pass ``forceOverwrite: true`` (mapped to the ``--force-mcp-overwrite``
+ * CLI flag) to reset ``command`` and ``args`` of known entries to the installer
+ * defaults; other keys on the entry (``env`` etc.) are kept.
+ *
+ * Returns ``{ writes, skipsMatching, skipsConflicting }`` so the caller can
+ * report each outcome distinctly.
+ *
+ * @param {string} configPath
+ * @param {{ forceOverwrite?: boolean, dryRun?: boolean }} [options]
+ */
+function mergeConfig(configPath, options = {}) {
+  const { forceOverwrite = false, dryRun = false } = options;
   const existing = readConfig(configPath) || {};
   existing.mcpServers = existing.mcpServers || {};
 
+  const writes = [];
+  const skipsMatching = [];
+  const skipsConflicting = [];
+
   for (const [name, config] of Object.entries(MCP_SERVERS)) {
-    existing.mcpServers[name] = { ...existing.mcpServers[name], ...config };
+    const current = existing.mcpServers[name];
+    if (!current) {
+      existing.mcpServers[name] = config;
+      writes.push(name);
+    } else if (forceOverwrite) {
+      // Installer-managed keys (command, args) win; any other keys the user
+      // added to the entry (env, etc.) are kept.
+      existing.mcpServers[name] = { ...current, ...config };
+      writes.push(name);
+    } else if (entriesEqual(current, config)) {
+      skipsMatching.push(name);
+    } else {
+      skipsConflicting.push({ name, current, planned: config });
+    }
   }
 
   // Remove deprecated servers left by older installer versions
@@ -86,9 +128,11 @@ function mergeConfig(configPath) {
     }
   }
 
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n', { mode: 0o600 });
-  return existing;
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n', { mode: 0o600 });
+  }
+  return { writes, skipsMatching, skipsConflicting };
 }
 
 /** Remove MCP_SERVERS entries from the config file. Returns true if any were removed. */
@@ -224,4 +268,5 @@ module.exports = {
   mergeConfig,
   removeFromConfig,
   ensureEnvFile,
+  entriesEqual,
 };

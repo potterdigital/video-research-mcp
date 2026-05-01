@@ -40,9 +40,27 @@ test('global registration uses Claude user scope and preserves user configuratio
   assert.equal(installed.projects['/other/project'].hasTrustDialogAccepted, true);
   assert.deepEqual(installed.mcpServers.personal, { command: 'my-server' });
   assert.equal(installed.mcpServers['video-research'].env.GEMINI_MODEL, 'custom');
-  assert.deepEqual(installed.mcpServers['video-research'].args, config.MCP_SERVERS['video-research'].args);
+  // A customized command/args entry is preserved by default (see
+  // tests/installer/test_config_merge.js); --force-mcp-overwrite resets it.
+  assert.deepEqual(installed.mcpServers['video-research'].args, ['old']);
+  assert.match(result.stdout + result.stderr, /Preserved existing 'video-research' entry/);
   assert.equal(installed.mcpServers['video-agent'].command, 'uv');
   assert.equal(fs.existsSync(path.join(home, '.claude/.mcp.json')), false);
+});
+
+test('force-mcp-overwrite resets installer args and keeps user env', (t) => {
+  // Guards: the escape hatch must refresh stale command/args on upgrade
+  // without discarding keys the user added to the entry.
+  const home = fixture(t);
+  const configPath = path.join(home, '.claude.json');
+  fs.writeFileSync(configPath, JSON.stringify({ mcpServers: {
+    'video-research': { command: 'uvx', args: ['old'], env: { GEMINI_MODEL: 'custom' } },
+  } }));
+  const result = runInstaller(home, '--global', '--force-mcp-overwrite');
+  assert.equal(result.status, 0, result.stderr);
+  const installed = JSON.parse(fs.readFileSync(configPath));
+  assert.equal(installed.mcpServers['video-research'].env.GEMINI_MODEL, 'custom');
+  assert.deepEqual(installed.mcpServers['video-research'].args, config.MCP_SERVERS['video-research'].args);
 });
 
 test('local install registers at the project root and creates private credential template', (t) => {

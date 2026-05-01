@@ -31,6 +31,7 @@ function parseArgs(argv) {
     check: args.includes('--check'),
     uninstall: args.includes('--uninstall'),
     force: args.includes('--force'),
+    forceMcpOverwrite: args.includes('--force-mcp-overwrite'),
     help: args.includes('--help') || args.includes('-h'),
   };
 }
@@ -42,12 +43,14 @@ video-research-mcp installer v${VERSION}
 Usage: npx video-research-mcp@latest [options]
 
 Options:
-  --global      Install globally to ~/.claude/
-  --local       Install locally to ./.claude/
-  --check       Show current install status
-  --uninstall   Remove installed files and config
-  --force       Overwrite user-modified files
-  --help, -h    Show this help
+  --global               Install globally to ~/.claude/
+  --local                Install locally to ./.claude/
+  --check                Show current install status
+  --uninstall            Remove installed files and config
+  --force                Overwrite user-modified files
+  --force-mcp-overwrite  Overwrite user-customised MCP server entries in
+                         .mcp.json (default: preserve them)
+  --help, -h             Show this help
 
 Without flags, prompts for global vs local install.
 \n`);
@@ -146,13 +149,29 @@ function showStatus(mode) {
     if (currentHash && currentHash !== entry.hash) modified++;
   }
   if (modified > 0) ui.warn(`${modified} file(s) modified since install`);
+
+  // Dry-run the MCP config merge so users can see which entries would be
+  // skipped due to user customisation without actually writing the config.
+  try {
+    const configPath = getConfigPath(mode);
+    const plan = mergeConfig(configPath, { dryRun: true });
+    if (plan.skipsConflicting.length > 0) {
+      ui.warn(
+        `${plan.skipsConflicting.length} MCP entry/entries differ from installer defaults ` +
+        `(would be preserved on install): ` +
+        plan.skipsConflicting.map((c) => c.name).join(', '),
+      );
+    }
+  } catch {
+    // Best-effort — never block --check on config errors.
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Install
 // ---------------------------------------------------------------------------
 
-async function install(mode, force) {
+async function install(mode, force, forceMcpOverwrite) {
   const sourceDir = getSourceDir();
   const targetDir = getTargetDir(mode);
   const configPath = getConfigPath(mode);
@@ -199,8 +218,18 @@ async function install(mode, force) {
 
   // Merge MCP config — degrade gracefully so the manifest is still written
   try {
-    mergeConfig(configPath);
-    ui.success(`MCP config updated: ${configPath}`);
+    const result = mergeConfig(configPath, { forceOverwrite: forceMcpOverwrite });
+    if (result.writes.length > 0) {
+      ui.success(`MCP config updated: ${configPath} (${result.writes.length} entry/entries written)`);
+    } else if (result.skipsMatching.length > 0 || result.skipsConflicting.length > 0) {
+      ui.success(`MCP config already current: ${configPath}`);
+    }
+    for (const conflict of result.skipsConflicting) {
+      ui.warn(
+        `Preserved existing '${conflict.name}' entry — differs from installer default. ` +
+        `Pass --force-mcp-overwrite to replace.`,
+      );
+    }
   } catch (err) {
     ui.warn(`MCP config not updated: ${err.message}`);
   }
@@ -377,7 +406,7 @@ async function main() {
   if (flags.uninstall) {
     await uninstall(mode);
   } else {
-    await install(mode, flags.force);
+    await install(mode, flags.force, flags.forceMcpOverwrite);
   }
 }
 
