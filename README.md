@@ -151,12 +151,50 @@ not loaded automatically.
 | `WEAVIATE_URL`, `WEAVIATE_API_KEY` | Connect optional saved-knowledge storage |
 | `MLFLOW_TRACKING_URI` | Enable optional tracing when its dependency is installed |
 | `INFRA_MUTATIONS_ENABLED` | Allow runtime model changes and cache clearing; disabled by default |
+| `LOCAL_FILE_ACCESS_ROOTS` | OS-pathsep-separated list of directories the server may read local files from. **Strongly recommended.** See _Local file access boundaries_ below |
+| `LOCAL_FILE_ACCESS_ROOT` | Legacy single-root alias, used only when `LOCAL_FILE_ACCESS_ROOTS` is unset |
 
 Provider usage, Deep Research jobs, optional embeddings, and media generation can
 incur charges. The npm installer and MCP connection do not grant provider access
 or establish the quality of generated results. See the
 [configuration guide](https://github.com/Galbaz1/video-research-mcp/blob/96f11b8c7d70a1bc4d73bfa500482f9811e4141f/docs/tutorials/GETTING_STARTED.md) and
 [security policy](https://github.com/Galbaz1/video-research-mcp/blob/96f11b8c7d70a1bc4d73bfa500482f9811e4141f/SECURITY.md) before processing sensitive material.
+
+### Local file access boundaries
+
+Tools that read local files (`content_analyze`, `content_batch_analyze`,
+`research_document`, video file ingest) accept arbitrary paths supplied by the
+calling LLM. When those paths are influenced by untrusted content (a fetched
+web page, a YouTube transcript, a document being analysed), the LLM may be
+prompted to read sensitive files such as `~/.ssh/id_rsa` or `~/.aws/credentials`
+and ship them to Gemini for analysis.
+
+Two independent layers protect against this:
+
+1. **Allowed roots.** Set `LOCAL_FILE_ACCESS_ROOTS` to one or more directories
+   the server is permitted to read from. Paths outside every configured root
+   are rejected. Multiple roots can be combined with the OS path separator
+   (`:` on Unix, `;` on Windows):
+
+   ```bash
+   export LOCAL_FILE_ACCESS_ROOTS="$HOME/dev:$HOME/Downloads:$HOME/Movies"
+   ```
+
+   When neither `LOCAL_FILE_ACCESS_ROOTS` nor `LOCAL_FILE_ACCESS_ROOT` is set,
+   the server logs a startup warning and the legacy permissive behaviour
+   applies (any path the OS user can read is allowed).
+
+2. **Sensitive-path deny-list.** Regardless of the configured roots, paths
+   matching well-known credential patterns are always denied: `.ssh/`, `.aws/`,
+   `.gnupg/`, `.docker/`, `.kube/`, `.config/gh/`, `.config/git/`, plus
+   filenames matching `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.kdbx`,
+   `*.gpg`, `*.p12`, `*.pfx`, `credentials*`, `.env`, `.env.*`, `.netrc`,
+   `.npmrc`, `.pypirc`, `htpasswd*`, `*.keystore`, `*.jks`. This is defence
+   in depth: even an explicitly-allowed root cannot override the deny-list.
+
+For maximum safety, configure `LOCAL_FILE_ACCESS_ROOTS` to the narrowest set
+of directories you actually need the server to read from, and keep secrets
+outside those directories whenever practical.
 
 ## Explore or contribute
 
