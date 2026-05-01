@@ -30,6 +30,7 @@ class ErrorCategory(str, Enum):
     DEPENDENCY_MISSING = "DEPENDENCY_MISSING"
     URL_POLICY_BLOCKED = "URL_POLICY_BLOCKED"
     PERMISSION_DENIED = "PERMISSION_DENIED"
+    SENSITIVE_PATH_DENIED = "SENSITIVE_PATH_DENIED"
     QUALITY_GATE_FAILED = "QUALITY_GATE_FAILED"
     ARTIFACT_GENERATION_FAILED = "ARTIFACT_GENERATION_FAILED"
     SCHEMA_VALIDATION_FAILED = "SCHEMA_VALIDATION_FAILED"
@@ -52,10 +53,16 @@ def categorize_error(error: Exception) -> tuple[ErrorCategory, str]:
     """Map an exception to an ErrorCategory + human-readable hint."""
     import httpx
 
+    from .local_path_policy import SensitivePathError
     from .url_policy import UrlPolicyError
 
     if isinstance(error, UrlPolicyError):
         return (ErrorCategory.URL_POLICY_BLOCKED, str(error))
+    if isinstance(error, SensitivePathError):
+        return (
+            ErrorCategory.SENSITIVE_PATH_DENIED,
+            "Path matches sensitive-path deny-list (.ssh, .aws, *.pem, .env*, etc) — these paths are always blocked to prevent credential exfiltration",
+        )
     if isinstance(error, PermissionError):
         return (
             ErrorCategory.PERMISSION_DENIED,
