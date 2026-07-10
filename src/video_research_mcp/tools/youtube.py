@@ -36,8 +36,18 @@ def _youtube_api_error(exc: Exception) -> dict:
         return make_tool_error(exc)
 
     if isinstance(exc, HttpError) and exc.resp.status == 403:
+        # YouTube returns 403 for per-video conditions too (reason in the error
+        # body, e.g. commentsDisabled) — those are video facts, not key problems.
+        body = str(exc)
+        if "commentsDisabled" in body:
+            return {
+                "error": "Comments are disabled by the uploader for this video.",
+                "category": "COMMENTS_DISABLED",
+                "hint": "Not an API-key problem — the video simply has comments turned off.",
+                "retryable": False,
+            }
         return {
-            "error": str(exc),
+            "error": body,
             "category": "API_PERMISSION_DENIED",
             "hint": _YT_403_HINT,
             "retryable": False,

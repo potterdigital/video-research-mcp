@@ -379,6 +379,44 @@ class TestVideoCommentsTool:
         assert "YOUTUBE_API_KEY" in result["hint"]
         assert "console.cloud.google.com" in result["hint"]
 
+    async def test_api_403_comments_disabled_is_not_a_key_error(self, mock_youtube_service):
+        """GIVEN a 403 whose reason is commentsDisabled WHEN calling tool THEN returns COMMENTS_DISABLED.
+
+        Guards: a video with comments turned off was reported as an API-key
+        problem, sending users to rotate a working key. Body mirrors the real
+        YouTube Data API v3 commentThreads.list error payload.
+        """
+        import json
+
+        from googleapiclient.errors import HttpError
+        from video_research_mcp.tools.youtube import video_comments
+
+        resp = MagicMock()
+        resp.status = 403
+        resp.reason = "Forbidden"
+        body = json.dumps({"error": {
+            "code": 403,
+            "message": "The video identified by the videoId parameter has disabled comments.",
+            "errors": [{
+                "message": "The video identified by the videoId parameter has disabled comments.",
+                "domain": "youtube.commentThread",
+                "reason": "commentsDisabled",
+                "location": "videoId",
+                "locationType": "parameter",
+            }],
+        }}).encode()
+        mock_youtube_service.commentThreads().list().execute.side_effect = (
+            HttpError(resp, body)
+        )
+
+        result = await video_comments(
+            url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        )
+
+        assert result["category"] == "COMMENTS_DISABLED"
+        assert result["retryable"] is False
+        assert "YOUTUBE_API_KEY" not in result["hint"]
+
 
 class TestVideoPlaylistTool:
     """video_playlist() MCP tool tests."""
