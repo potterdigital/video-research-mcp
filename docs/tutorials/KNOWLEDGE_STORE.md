@@ -45,7 +45,7 @@ Create a `docker-compose.yml`:
 ```yaml
 services:
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    image: cr.weaviate.io/semitechnologies/weaviate:1.37.4
     ports:
       - "8080:8080"
       - "50051:50051"
@@ -471,7 +471,7 @@ export FLASH_SUMMARIZE=false
 
 ### How it works
 
-The summarizer (`tools/knowledge/summarize.py`) batches up to 20 hits and sends them to Gemini Flash (`gemini-3-flash-preview`) with `thinking_level="minimal"` for fast processing.
+The summarizer (`tools/knowledge/summarize.py`) batches up to 20 hits and sends them to Gemini Flash (`gemini-3.5-flash`) with `thinking_level="minimal"` for fast processing.
 
 The `HitSummaryBatch` model structures Flash's output:
 

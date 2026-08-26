@@ -123,9 +123,9 @@ class ServerConfig(BaseModel):
     """Runtime configuration resolved from environment."""
 
     gemini_api_key: str = Field(default="")
-    default_model: str = Field(default="gemini-3.1-pro-preview")
-    flash_model: str = Field(default="gemini-3-flash-preview")
-    default_thinking_level: str = Field(default="high")
+    default_model: str = Field(default="gemini-3.5-flash")
+    flash_model: str = Field(default="gemini-3.5-flash")
+    default_thinking_level: str = Field(default="medium")
     default_temperature: float = Field(default=1.0)
     cache_dir: str = Field(default="")
     cache_ttl_days: int = Field(default=30)
@@ -201,8 +201,8 @@ class ServerConfig(BaseModel):
     @classmethod
     def validate_weaviate_vectorizer(cls, value: str) -> str:
         v = value.strip().lower()
-        if v not in ("openai", "weaviate"):
-            raise ValueError(f"WEAVIATE_VECTORIZER must be 'openai' or 'weaviate', got '{value}'")
+        if v not in ("openai", "weaviate", "ollama"):
+            raise ValueError(f"WEAVIATE_VECTORIZER must be 'openai', 'weaviate', or 'ollama', got '{value}'")
         return v
 
     @field_validator("deep_research_agent")
@@ -230,9 +230,9 @@ class ServerConfig(BaseModel):
         _has_openai = bool(os.environ.get("OPENAI_API_KEY", ""))
         return cls(
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
-            default_model=os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview"),
-            flash_model=os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview"),
-            default_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "high"),
+            default_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+            flash_model=os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash"),
+            default_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "medium"),
             default_temperature=float(os.getenv("GEMINI_TEMPERATURE", "1.0")),
             cache_dir=os.getenv("GEMINI_CACHE_DIR", cache_default),
             cache_ttl_days=int(os.getenv("GEMINI_CACHE_TTL_DAYS", "30")),

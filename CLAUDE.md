@@ -6,9 +6,9 @@ Do not import `AGENTS.md` (for example via `@AGENTS.md` or `@../AGENTS.md`) from
 
 ## What This Is
 
-A monorepo with three MCP servers (45 tools total):
+A monorepo with three MCP servers (51 tools total):
 
-1. **video-research-mcp** (root) — 28 tools for video analysis, deep research, content extraction, web search, and context caching. Powered by Gemini 3.1 Pro (`google-genai` SDK) and YouTube Data API v3.
+1. **video-research-mcp** (root) — 34 tools for video analysis, deep research, academic papers, content extraction, web search, and context caching. Powered by Gemini 3.1 Pro (`google-genai` SDK) and YouTube Data API v3.
 2. **video-explainer-mcp** (`packages/video-explainer-mcp/`) — 15 tools for synthesizing explainer videos from research content. Wraps the [video_explainer](https://github.com/prajwal-y/video_explainer) CLI.
 3. **video-agent-mcp** (`packages/video-agent-mcp/`) — 2 tools providing an autonomous research agent orchestrator. Wraps video-research-mcp tools with planning and execution loops.
 
@@ -209,7 +209,7 @@ Agent configuration: `.claude/rules/` contains project-specific conventions that
 
 ## Testing
 
-724 tests, all unit-level with mocked Gemini. `asyncio_mode=auto`. No test hits the real API.
+781 tests, all unit-level with mocked Gemini. `asyncio_mode=auto`. No test hits the real API.
 
 **Key fixtures** (`conftest.py`): `mock_gemini_client` (mocks `.get()`, `.generate()`, `.generate_structured()`), `clean_config` (isolates config), `mock_weaviate_client`, `mock_weaviate_disabled`, `_unwrap_fastmcp_tools` (session-scoped, ensures tool callability), autouse `GEMINI_API_KEY=test-key-not-real`, `_disable_tracing`, `_isolate_dotenv`, `_isolate_upload_cache`.
 
@@ -238,8 +238,9 @@ Canonical source: `config.py:ServerConfig`. Key variables:
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `GEMINI_API_KEY` | (required) | Also used as YouTube fallback |
-| `GEMINI_MODEL` | `gemini-3.1-pro-preview` | |
-| `GEMINI_FLASH_MODEL` | `gemini-3-flash-preview` | |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | |
+| `GEMINI_FLASH_MODEL` | `gemini-3.5-flash` | Same default as `GEMINI_MODEL`; thinking_level is the dial |
+| `GEMINI_THINKING_LEVEL` | `medium` | `minimal` / `low` / `medium` / `high` |
 | `DEEP_RESEARCH_AGENT` | `deep-research-pro-preview-12-2025` | Interactions API agent ID |
 | `WEAVIATE_URL` | `""` | Empty = knowledge store disabled |
 | `WEAVIATE_API_KEY` | `""` | Required for Weaviate Cloud |
