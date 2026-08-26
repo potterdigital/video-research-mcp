@@ -22,3 +22,5 @@ output/
 .playwright-mcp/
 *.bak.*
 .mcp.json
+pyproject.toml.bak
+uv.lock.bak
