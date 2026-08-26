@@ -1,4 +1,4 @@
-"""Deep Research tools — Gemini Interactions API (4 tools on research_server).
+"""Deep Research tools — Gemini NextGen Interactions API (4 tools on research_server).
 
 Provides research_web (launch), research_web_status (poll/retrieve),
 research_web_followup (conversational follow-up), and research_web_cancel
@@ -60,45 +60,48 @@ def _find_active_interaction() -> str | None:
 
 
 def _extract_report(interaction) -> tuple[str, list[DeepResearchSource]]:
-    """Extract report text and sources from Interaction outputs.
+    """Extract report text and sources from a google-genai 2.x Interaction.
+
+    The NextGen Interactions API exposes results via ``steps`` (typed step
+    objects) plus a convenience ``output_text`` (concatenated final model
+    output). Report text prefers ``output_text``; sources are collected from
+    URL citations on model-output text content and from url_context_result
+    steps. (The 1.x ``outputs`` attribute no longer exists.)
 
     Args:
-        interaction: A google.genai Interaction object.
+        interaction: A google.genai Interaction object (2.x schema).
 
     Returns:
         Tuple of (report_text, sources_list).
     """
     report_parts: list[str] = []
     sources: list[DeepResearchSource] = []
+    seen_urls: set[str] = set()
 
-    for turn in getattr(interaction, "outputs", []) or []:
-        # Check direct text field (Deep Research format)
-        direct_text = getattr(turn, "text", "")
-        if direct_text:
-            report_parts.append(direct_text)
-        # Also check content array (standard Interactions format)
-        for content in getattr(turn, "content", []) or []:
-            content_type = getattr(content, "type", "")
-            if content_type == "text":
+    def _add_source(url: str, title: str = "", status: str = "") -> None:
+        if not url or url in seen_urls:
+            return
+        seen_urls.add(url)
+        sources.append(DeepResearchSource(url=url, title=title or "", status=status or ""))
+
+    for step in getattr(interaction, "steps", []) or []:
+        step_type = getattr(step, "type", "")
+        if step_type == "model_output":
+            for content in getattr(step, "content", []) or []:
                 text = getattr(content, "text", "")
                 if text:
                     report_parts.append(text)
-            elif content_type == "googleSearchResult":
-                result = getattr(content, "result", None)
-                if result:
-                    sources.append(DeepResearchSource(
-                        url=getattr(result, "url", ""),
-                        title=getattr(result, "title", ""),
-                    ))
-            elif content_type == "urlContextResult":
-                result = getattr(content, "result", None)
-                if result:
-                    sources.append(DeepResearchSource(
-                        url=getattr(result, "url", ""),
-                        status=getattr(result, "status", ""),
-                    ))
+                # URL citations attached to text content are the report's sources.
+                for ann in getattr(content, "annotations", []) or []:
+                    if getattr(ann, "type", "") == "url_citation":
+                        _add_source(getattr(ann, "url", ""), getattr(ann, "title", ""))
+        elif step_type == "url_context_result":
+            for result in getattr(step, "result", []) or []:
+                _add_source(getattr(result, "url", ""), status=getattr(result, "status", ""))
 
-    return "\n\n".join(report_parts), sources
+    # Prefer the SDK's concatenated output_text; fall back to collected parts.
+    report_text = getattr(interaction, "output_text", "") or "\n\n".join(report_parts)
+    return report_text, sources
 
 
 def _extract_usage(interaction) -> dict:
@@ -201,7 +204,7 @@ async def research_web_status(
         interaction = None
         for attempt in range(3):
             try:
-                interaction = await client.aio.interactions.get(interaction_id)
+                interaction = await client.aio.interactions.get(id=interaction_id)
                 break
             except Exception as exc:
                 if "403" in str(exc).lower() and attempt < 2:
@@ -293,13 +296,17 @@ async def research_web_followup(
             previous_interaction_id=interaction_id,
         )
 
-        response_text = ""
-        for turn in getattr(followup, "outputs", []) or []:
-            for content in getattr(turn, "content", []) or []:
-                if getattr(content, "type", "") == "text":
-                    text = getattr(content, "text", "")
-                    if text:
-                        response_text += text + "\n"
+        # 2.x: prefer output_text; fall back to walking model_output steps.
+        response_text = getattr(followup, "output_text", "") or ""
+        if not response_text:
+            parts: list[str] = []
+            for step in getattr(followup, "steps", []) or []:
+                if getattr(step, "type", "") == "model_output":
+                    for content in getattr(step, "content", []) or []:
+                        text = getattr(content, "text", "")
+                        if text:
+                            parts.append(text)
+            response_text = "\n".join(parts)
 
         result = DeepResearchFollowup(
             interaction_id=followup.id,
@@ -340,7 +347,7 @@ async def research_web_cancel(
     """
     try:
         client = GeminiClient.get()
-        await client.aio.interactions.cancel(interaction_id)
+        await client.aio.interactions.cancel(id=interaction_id)
         _launch_times.pop(interaction_id, None)
         logger.info("Deep Research cancelled: %s", interaction_id)
         return {"interaction_id": interaction_id, "status": "cancelled"}

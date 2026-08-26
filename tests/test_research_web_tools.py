@@ -30,38 +30,42 @@ from video_research_mcp.tools.research_web import (
 def _make_interaction(
     interaction_id: str = "test-interaction-123",
     status: str = "completed",
-    outputs: list | None = None,
+    steps: list | None = None,
+    output_text: str | None = None,
     usage: object | None = None,
 ):
-    """Build a mock Interaction object."""
+    """Build a mock google-genai 2.x Interaction object (steps + output_text)."""
     return SimpleNamespace(
         id=interaction_id,
         status=status,
-        outputs=outputs or [],
+        steps=steps or [],
+        output_text=output_text,
         usage=usage,
     )
 
 
-def _make_text_content(text: str):
-    return SimpleNamespace(type="text", text=text)
+def _make_url_citation(url: str, title: str = ""):
+    """A url_citation annotation attached to model-output text content."""
+    return SimpleNamespace(type="url_citation", url=url, title=title, start_index=0, end_index=0)
 
 
-def _make_search_result_content(url: str, title: str = ""):
+def _make_text_content(text: str, annotations: list | None = None):
+    """A TextContent block inside a model_output step; annotations carry sources."""
+    return SimpleNamespace(type="text", text=text, annotations=annotations or [])
+
+
+def _make_model_output_step(contents: list):
+    """A model_output step whose .content is a list of content blocks."""
+    return SimpleNamespace(type="model_output", content=contents, error=None)
+
+
+def _make_url_context_result_step(results: list):
+    """A url_context_result step; results is a list of (url, status) tuples."""
     return SimpleNamespace(
-        type="googleSearchResult",
-        result=SimpleNamespace(url=url, title=title),
+        type="url_context_result",
+        result=[SimpleNamespace(url=u, status=s) for (u, s) in results],
+        call_id="call-1",
     )
-
-
-def _make_url_context_content(url: str, status: str = "ok"):
-    return SimpleNamespace(
-        type="urlContextResult",
-        result=SimpleNamespace(url=url, status=status),
-    )
-
-
-def _make_turn(contents: list):
-    return SimpleNamespace(content=contents, role="model")
 
 
 def _make_usage(input_tokens=100, output_tokens=200, total=300, thought=50):
@@ -78,14 +82,17 @@ def _make_usage(input_tokens=100, output_tokens=200, total=300, thought=50):
 
 class TestExtractReport:
     def test_extracts_text_and_sources(self):
-        """GIVEN outputs with text and search results WHEN extracting THEN both are returned."""
-        interaction = _make_interaction(outputs=[
-            _make_turn([
-                _make_text_content("# Report Title"),
-                _make_search_result_content("https://example.com", "Example"),
+        """GIVEN model_output steps with url citations + a url_context_result step
+        WHEN extracting THEN report text and both source kinds are returned."""
+        interaction = _make_interaction(steps=[
+            _make_model_output_step([
+                _make_text_content(
+                    "# Report Title",
+                    annotations=[_make_url_citation("https://example.com", "Example")],
+                ),
                 _make_text_content("## Section 1"),
-                _make_url_context_content("https://other.com", "ok"),
             ]),
+            _make_url_context_result_step([("https://other.com", "ok")]),
         ])
         text, sources = _extract_report(interaction)
 
@@ -97,49 +104,52 @@ class TestExtractReport:
         assert sources[1].url == "https://other.com"
         assert sources[1].status == "ok"
 
-    def test_empty_outputs(self):
-        """GIVEN no outputs WHEN extracting THEN empty results."""
-        interaction = _make_interaction(outputs=[])
+    def test_empty_steps(self):
+        """GIVEN no steps and no output_text WHEN extracting THEN empty results."""
+        interaction = _make_interaction(steps=[], output_text=None)
         text, sources = _extract_report(interaction)
         assert text == ""
         assert sources == []
 
-    def test_none_outputs(self):
-        """GIVEN None outputs WHEN extracting THEN empty results."""
-        interaction = _make_interaction(outputs=None)
+    def test_none_steps(self):
+        """GIVEN None steps WHEN extracting THEN empty results."""
+        interaction = _make_interaction(steps=None, output_text=None)
         text, sources = _extract_report(interaction)
         assert text == ""
         assert sources == []
 
-    def test_multiple_turns(self):
-        """GIVEN multiple turns WHEN extracting THEN all text is concatenated."""
-        interaction = _make_interaction(outputs=[
-            _make_turn([_make_text_content("Part 1")]),
-            _make_turn([_make_text_content("Part 2")]),
+    def test_multiple_model_output_steps(self):
+        """GIVEN multiple model_output steps (no output_text) WHEN extracting
+        THEN all text is concatenated via the steps fallback."""
+        interaction = _make_interaction(steps=[
+            _make_model_output_step([_make_text_content("Part 1")]),
+            _make_model_output_step([_make_text_content("Part 2")]),
         ])
         text, _ = _extract_report(interaction)
         assert "Part 1" in text
         assert "Part 2" in text
 
-    def test_extracts_direct_turn_text(self):
-        """GIVEN turn with text attr and no content WHEN extracting THEN text is captured."""
-        turn = SimpleNamespace(text="# Full Report\n\nDetailed findings here.", content=None)
-        interaction = _make_interaction(outputs=[turn])
+    def test_uses_output_text_when_present(self):
+        """GIVEN output_text set and no steps WHEN extracting THEN output_text is the report."""
+        interaction = _make_interaction(
+            output_text="# Full Report\n\nDetailed findings here.",
+            steps=[],
+        )
         text, sources = _extract_report(interaction)
         assert "Full Report" in text
         assert "Detailed findings" in text
         assert sources == []
 
-    def test_extracts_both_turn_text_and_content(self):
-        """GIVEN turn with both text attr and content array WHEN extracting THEN both captured."""
-        turn = SimpleNamespace(
-            text="Direct text from turn",
-            content=[_make_text_content("Content array text")],
+    def test_output_text_preferred_over_steps(self):
+        """GIVEN both output_text and model_output step text WHEN extracting
+        THEN output_text wins (canonical final report), steps text is not appended."""
+        interaction = _make_interaction(
+            output_text="Final canonical report",
+            steps=[_make_model_output_step([_make_text_content("raw intermediate step text")])],
         )
-        interaction = _make_interaction(outputs=[turn])
         text, _ = _extract_report(interaction)
-        assert "Direct text from turn" in text
-        assert "Content array text" in text
+        assert "Final canonical report" in text
+        assert "raw intermediate step text" not in text
 
 
 # ── _extract_usage ────────────────────────────────────────────────────────
@@ -266,10 +276,15 @@ class TestResearchWebStatus:
     async def test_completed_returns_full_report(self, mock_gemini_client):
         """GIVEN completed interaction WHEN polling THEN returns report with sources."""
         interaction = _make_interaction(
-            outputs=[_make_turn([
-                _make_text_content("# Deep Research Report\n\nFindings here."),
-                _make_search_result_content("https://source1.com", "Source 1"),
-                _make_search_result_content("https://source2.com", "Source 2"),
+            output_text="# Deep Research Report\n\nFindings here.",
+            steps=[_make_model_output_step([
+                _make_text_content(
+                    "# Deep Research Report\n\nFindings here.",
+                    annotations=[
+                        _make_url_citation("https://source1.com", "Source 1"),
+                        _make_url_citation("https://source2.com", "Source 2"),
+                    ],
+                ),
             ])],
             usage=_make_usage(500, 8000, 8500, 200),
         )
@@ -352,7 +367,7 @@ class TestResearchWebStatus:
         """GIVEN completed but no launch time WHEN polling THEN duration is None."""
         interaction = _make_interaction(
             interaction_id="orphan-id",
-            outputs=[_make_turn([_make_text_content("Report")])],
+            output_text="Report",
         )
         mock_client = MagicMock()
         mock_client.aio.interactions.get = AsyncMock(return_value=interaction)
@@ -375,9 +390,7 @@ class TestResearchWebFollowup:
         """GIVEN completed interaction WHEN following up THEN returns response."""
         followup_interaction = _make_interaction(
             interaction_id="followup-789",
-            outputs=[_make_turn([
-                _make_text_content("The key distinction is..."),
-            ])],
+            output_text="The key distinction is...",
         )
         mock_client = MagicMock()
         mock_client.aio.interactions.create = AsyncMock(return_value=followup_interaction)
@@ -405,7 +418,7 @@ class TestResearchWebFollowup:
         """GIVEN interaction_id WHEN following up THEN passes previous_interaction_id."""
         followup_interaction = _make_interaction(
             interaction_id="followup-new",
-            outputs=[_make_turn([_make_text_content("Answer")])],
+            output_text="Answer",
         )
         mock_client = MagicMock()
         mock_client.aio.interactions.create = AsyncMock(return_value=followup_interaction)
