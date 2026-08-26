@@ -24,6 +24,8 @@ output/
 .playwright-mcp/
 *.bak.*
 .mcp.json
+pyproject.toml.bak
+uv.lock.bak
 
 # Local cloud agent state and video session content
 .codex/
