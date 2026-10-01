@@ -25,6 +25,7 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - yt-dlp downloads cap at `YOUTUBE_MAX_HEIGHT` (1080) instead of 720 and prefer H.264 with merged m4a audio. Without ffmpeg only single-file MP4s are requested, reported as `download@single` with a warning. Unmerged stream files are removed when a merge fails, and the cache file name records the height cap.
 - The `video_analyze` result cache key includes resolution, clip, fps and source.
 - Upload processing waits scale with file size (120 s plus 5 minutes per GB) instead of a flat 120 s.
+- `google-genai` floor raised to 2.26.0. Its [release notes](https://github.com/googleapis/python-genai/releases/tag/v2.26.0) have no breaking-changes section; the fixes that touch this server are model building before reading field annotations when pruning extra fields and reaping aiohttp sessions and auth locks of closed event loops.
 - The installer no longer overwrites an MCP entry whose `command` or `args` the user edited; it warns and keeps it (`--force-mcp-overwrite` restores the old behavior). Entries equal to the current or any earlier installer default are still refreshed on upgrade, and other keys such as `env` are kept.
 
 ### Fixed
