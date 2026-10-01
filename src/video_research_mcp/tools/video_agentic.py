@@ -123,8 +123,16 @@ async def generate_agentic(
 
     The text goes after the video, per Google's guidance for a single video
     plus a prompt. The call is synchronous (no ``background``, which needs
-    ``store=True``); the SDK retries 408/409/429/5XX itself, so this does not
-    wrap it in ``with_retry`` and risk paying for a second agentic run.
+    ``store=True``).
+
+    Not wrapped in ``with_retry``: google-genai sends Interactions calls
+    through its generated NextGen client, which retries 408/409/429/5XX with
+    backoff (3 retries, 30 s budget) when ``http_options`` has no
+    ``retry_options`` (``google/genai/_gaos/google_genai.py``,
+    ``_translate_retry_config``; pinned by ``TestSdkRetries``). That differs
+    from ``models.generate_content``, where ``retry_args(None)`` means a
+    single attempt and ``client.py`` adds ``with_retry``. Stacking both here
+    would multiply attempts on a paid agentic run.
 
     Returns:
         (output_text, usage_totals)

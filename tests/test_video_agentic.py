@@ -279,6 +279,49 @@ class TestErrors:
         assert "error" in result
 
 
+class TestSdkRetries:
+    async def test_transient_429_and_503_are_retried_to_one_success(self, monkeypatch):
+        # Catches: generate_agentic relying on SDK retries that are not there.
+        # Interactions calls go through google-genai's generated NextGen client
+        # (google/genai/_gaos/google_genai.py, _translate_retry_config), which
+        # retries 408/409/429/5XX with backoff when http_options carries no
+        # retry_options. If an SDK upgrade or a GeminiClient change drops that,
+        # the first 503 surfaces as an error and this test fails.
+        import httpx
+
+        from video_research_mcp.client import GeminiClient
+        from video_research_mcp.tools.video_agentic import generate_agentic
+
+        monkeypatch.setenv("GEMINI_MODEL", "gemini-3.8-flash")
+        cfg_mod._config = None
+        statuses = iter([503, 429])
+        paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            paths.append(request.url.path)
+            status = next(statuses, 200)
+            if status != 200:
+                return httpx.Response(status, json={"error": {"code": status, "message": "busy"}})
+            return httpx.Response(200, json={
+                "id": "i1", "status": "completed",
+                "steps": [{"type": "model_output",
+                           "content": [{"type": "text", "text": '{"title": "T"}'}]}],
+            })
+
+        monkeypatch.setattr(GeminiClient, "_clients", {})
+        client = GeminiClient.get()
+        client._api_client._async_httpx_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+        )
+        raw, _usage = await generate_agentic(
+            {"type": "video", "uri": URL, "processing": "agentic"}, "Summarize",
+            schema={"type": "object", "properties": {"title": {"type": "string"}}},
+        )
+        assert json.loads(raw) == {"title": "T"}
+        assert len(paths) == 3
+        assert all(p.endswith("/interactions") for p in paths)
+
+
 class TestAutoDetailOnAgentic:
     async def test_agentic_segments_feed_the_high_resolution_reread(
         self, interactions, no_metadata, tmp_path,
