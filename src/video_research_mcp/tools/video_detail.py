@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from google.genai import types
@@ -27,12 +29,20 @@ from .video_options import apply_video_options, parse_offset
 logger = logging.getLogger(__name__)
 
 PAD_SECONDS = 3.0
-# Gemini docs: inline video suits "shorter videos under 20MB total request
-# size". Leave headroom for the prompt; larger clips go through the File API.
-INLINE_MAX_BYTES = 15 * 1000 * 1000
+# Gemini video docs: inline data "is suitable for shorter videos under 20MB
+# total request size", and inline bytes travel base64 encoded (4/3 larger).
+# 12,000,000 bytes encode to 16,000,000, leaving about 4 MB of the 20 MB for
+# the prompt and JSON framing; larger clips go through the File API.
+INLINE_MAX_BYTES = 12_000_000
 MAX_SEGMENTS = 6
 MAX_SEGMENT_SECONDS = 120.0
 _CONCURRENCY = 3
+# ffprobe reads only the container header. ffmpeg re-encodes, so its bound
+# grows with clip length: a fixed allowance plus a few seconds per second of
+# clip, generous for a slow CPU at 1080p with the veryfast preset.
+FFPROBE_TIMEOUT_SECONDS = 30.0
+FFMPEG_BASE_TIMEOUT_SECONDS = 60.0
+FFMPEG_SECONDS_PER_CLIP_SECOND = 5.0
 
 _READ_PROMPT = (
     "This clip is part of a longer video. Transcribe ALL on-screen text in it "
@@ -91,19 +101,24 @@ def plan_clips(
         if s is None or e is None or e <= s:
             notes.append(f"Skipped segment with unusable times: {seg.get('start')!r}-{seg.get('end')!r}")
             continue
+        orig = (s, e, seg.get("reason", ""))
         s, e = max(0.0, s - pad), e + pad
         if duration:
             e = min(e, duration)
         if e <= s:
+            notes.append(
+                f"Skipped segment {seg.get('start')!r}-{seg.get('end')!r}: it starts after "
+                f"the end of the video ({duration:.0f}s)"
+            )
             continue
-        ranges.append({"start": s, "end": e, "reasons": [seg.get("reason", "")]})
+        ranges.append({"start": s, "end": e, "parts": [orig]})
 
     ranges.sort(key=lambda r: r["start"])
     merged: list[dict] = []
     for r in ranges:
         if merged and r["start"] <= merged[-1]["end"]:
             merged[-1]["end"] = max(merged[-1]["end"], r["end"])
-            merged[-1]["reasons"] += r["reasons"]
+            merged[-1]["parts"] += r["parts"]
         else:
             merged.append(r)
 
@@ -113,26 +128,40 @@ def plan_clips(
                 f"Segment at {r['start']:.0f}s cut to {max_seconds:.0f}s for the high-resolution read"
             )
             r["end"] = r["start"] + max_seconds
+        # Keep only reasons whose original (unpadded) range is still inside the clip.
+        r["reasons"] = [
+            reason for (s, e, reason) in r.pop("parts") if s < r["end"] and e > r["start"]
+        ]
     if len(merged) > max_segments:
         notes.append(f"Read the first {max_segments} of {len(merged)} segments at high resolution")
         merged = merged[:max_segments]
     return merged, notes
 
 
-async def _run(cmd: list[str]) -> tuple[int, str, str]:
+async def _run(cmd: list[str], *, timeout: float) -> tuple[int, str, str]:
+    """Run ``cmd``; kill it and raise RuntimeError if it outlives ``timeout`` seconds."""
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"{cmd[0]} did not finish within {timeout:.0f}s and was stopped") from None
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 async def probe_duration(path: Path) -> float | None:
-    """Video duration in seconds via ffprobe, or None if it cannot be read."""
+    """Video duration in seconds via ffprobe, or None if it cannot be read.
+
+    Raises:
+        RuntimeError: If ffprobe runs past ``FFPROBE_TIMEOUT_SECONDS``.
+    """
     code, out, _ = await _run([
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", str(path),
-    ])
+    ], timeout=FFPROBE_TIMEOUT_SECONDS)
     try:
         return float(out.strip()) if code == 0 else None
     except ValueError:
@@ -146,14 +175,19 @@ async def trim_clip(source: Path, start: float, end: float, out_path: Path) -> P
     requested frame instead of the previous keyframe.
 
     Raises:
-        RuntimeError: If ffmpeg fails or produces no file.
+        RuntimeError: If ffmpeg fails, times out or produces no file.
     """
-    code, _, err = await _run([
-        "ffmpeg", "-nostdin", "-v", "error", "-y",
-        "-ss", f"{start:.3f}", "-i", str(source), "-t", f"{end - start:.3f}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-c:a", "aac", "-movflags", "+faststart", str(out_path),
-    ])
+    timeout = FFMPEG_BASE_TIMEOUT_SECONDS + FFMPEG_SECONDS_PER_CLIP_SECOND * (end - start)
+    try:
+        code, _, err = await _run([
+            "ffmpeg", "-nostdin", "-v", "error", "-y",
+            "-ss", f"{start:.3f}", "-i", str(source), "-t", f"{end - start:.3f}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-movflags", "+faststart", str(out_path),
+        ], timeout=timeout)
+    except RuntimeError:
+        out_path.unlink(missing_ok=True)
+        raise
     if code != 0 or not out_path.exists() or out_path.stat().st_size == 0:
         out_path.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg could not cut {start:.1f}-{end:.1f}s: {err.strip()[:300]}")
@@ -210,7 +244,10 @@ async def read_detail_segments(
         return [], ["auto_detail needs ffmpeg and ffprobe to cut clips; neither re-read ran"]
 
     cfg = get_config()
-    duration = await probe_duration(source)
+    try:
+        duration = await probe_duration(source)
+    except RuntimeError as exc:
+        return [], [f"Could not read the video duration to plan clips: {exc}"]
     clips, notes = plan_clips(segments, duration)
     if not clips:
         return [], notes
@@ -219,19 +256,25 @@ async def read_detail_segments(
     clip_dir.mkdir(parents=True, exist_ok=True)
     semaphore = asyncio.Semaphore(_CONCURRENCY)
 
-    async def _one(i: int, clip: dict) -> dict:
+    async def _one(clip: dict) -> dict:
         reason = "; ".join(r for r in clip["reasons"] if r)
         entry = {
             "clip_start": _clock(clip["start"]),
             "clip_end": _clock(clip["end"]),
             "reason": reason,
         }
-        key = f"{clip['start']:.3f}-{clip['end']:.3f}|{instruction}"
+        key = f"{clip['start']:.3f}-{clip['end']:.3f}|{thinking_level}|{instruction}"
         if use_cache:
             cached = cache_load(content_id, "video_detail_read", cfg.default_model, instruction=key)
             if cached:
                 return {**entry, **cached, "cached": True}
-        out_path = clip_dir / f"clip-{i}-{clip['start']:.0f}-{clip['end']:.0f}.mp4"
+        # A unique name per call: two concurrent reads of the same video must
+        # not overwrite (ffmpeg -y) or unlink each other's clip.
+        fd, name = tempfile.mkstemp(
+            prefix=f"clip-{clip['start']:.0f}-{clip['end']:.0f}-", suffix=".mp4", dir=clip_dir,
+        )
+        os.close(fd)
+        out_path = Path(name)
         async with semaphore:
             try:
                 await trim_clip(source, clip["start"], clip["end"], out_path)
@@ -248,5 +291,11 @@ async def read_detail_segments(
             cache_save(content_id, "video_detail_read", cfg.default_model, data, instruction=key)
         return {**entry, **data}
 
-    readings = await asyncio.gather(*[_one(i, c) for i, c in enumerate(clips)])
+    try:
+        readings = await asyncio.gather(*[_one(c) for c in clips])
+    finally:
+        try:
+            clip_dir.rmdir()  # only succeeds when empty; another call may still use it
+        except OSError:
+            pass
     return list(readings), notes

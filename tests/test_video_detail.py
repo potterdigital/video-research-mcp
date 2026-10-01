@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 from pathlib import Path
@@ -86,6 +87,41 @@ class TestPlanClips:
         assert long[0]["end"] - long[0]["start"] == 60
         assert notes and notes2
 
+    def test_segment_past_the_end_is_noted_not_dropped_silently(self):
+        # Catches: a flagged range beyond the video's duration vanishing with
+        # no explanation in detail_notes.
+        clips, notes = plan_clips([_seg("05:00", "05:10")], duration=60.0)
+        assert clips == []
+        assert "starts after the end of the video" in notes[0]
+
+    def test_truncation_drops_reasons_no_longer_in_the_clip(self):
+        # Catches: a reason reported for a clip that was cut before its range,
+        # so the reading claims to cover content it never saw.
+        clips, _ = plan_clips(
+            [_seg("00:10", "01:00", "early"), _seg("01:02", "03:00", "late")],
+            duration=None, max_seconds=60,
+        )
+        assert (clips[0]["start"], clips[0]["end"]) == (7.0, 67.0)
+        assert clips[0]["reasons"] == ["early", "late"]
+        clips, _ = plan_clips(
+            [_seg("00:10", "01:00", "early"), _seg("01:02", "03:00", "late")],
+            duration=None, max_seconds=50,
+        )
+        assert clips[0]["reasons"] == ["early"]
+
+
+def test_inline_limit_fits_the_request_cap_after_base64():
+    # Catches: an inline clip whose base64 body alone passes Gemini's 20 MB
+    # request limit (15 MB encodes to 20 MB), failing the read with a 400.
+    encoded = -(-video_detail.INLINE_MAX_BYTES // 3) * 4
+    assert encoded + 2_000_000 <= 20_000_000
+
+
+async def test_run_kills_a_command_that_outlives_its_timeout():
+    # Catches: a hung ffmpeg or ffprobe blocking the tool call forever.
+    with pytest.raises(RuntimeError, match="did not finish within"):
+        await video_detail._run(["sleep", "5"], timeout=0.2)
+
 
 @needs_ffmpeg
 class TestTrim:
@@ -119,7 +155,7 @@ class TestReadDetailSegments:
         assert video.inline_data is not None and video.inline_data.mime_type == "video/mp4"
         assert video.media_resolution.level == HIGH
         assert contents.parts[1].text  # prompt after the video, per Gemini's video guidance
-        assert list((clip_cache_dir / "clips" / "vid").iterdir()) == []  # clips cleaned up
+        assert not (clip_cache_dir / "clips" / "vid").exists()  # clips and their dir cleaned up
 
     async def test_one_failed_clip_does_not_sink_the_rest(self, sample_video, clip_cache_dir, mock_gemini_client):
         mock_gemini_client["generate_structured"].side_effect = [
@@ -130,6 +166,66 @@ class TestReadDetailSegments:
             content_id="vid", instruction="i", use_cache=False,
         )
         assert sorted("error" in r for r in readings) == [False, True]
+
+    async def test_concurrent_reads_of_one_video_use_distinct_clip_files(
+        self, sample_video, clip_cache_dir, mock_gemini_client,
+    ):
+        # Catches: two calls for the same video and range writing the same
+        # clip path, so one ffmpeg -y overwrites or one finally deletes the
+        # other's clip mid-read.
+        mock_gemini_client["generate_structured"].return_value = DetailReading(on_screen_text="x")
+        paths: list[Path] = []
+        real_trim = video_detail.trim_clip
+
+        async def recording_trim(source, start, end, out_path):
+            paths.append(out_path)
+            return await real_trim(source, start, end, out_path)
+
+        args = dict(content_id="vid", instruction="i", use_cache=False)
+        with patch.object(video_detail, "trim_clip", recording_trim):
+            results = await asyncio.gather(
+                read_detail_segments(sample_video, [_seg("00:04", "00:06")], **args),
+                read_detail_segments(sample_video, [_seg("00:04", "00:06")], **args),
+            )
+        assert len(paths) == 2 and paths[0] != paths[1]
+        assert all("error" not in r[0][0] for r in results)
+        assert not (clip_cache_dir / "clips" / "vid").exists()
+
+    async def test_ffmpeg_timeout_is_a_clip_error_and_leaves_no_file(
+        self, sample_video, clip_cache_dir, mock_gemini_client, monkeypatch,
+    ):
+        # Catches: a stalled encode hanging the call or leaving a partial clip.
+        monkeypatch.setattr(video_detail, "FFMPEG_BASE_TIMEOUT_SECONDS", 0.0)
+        monkeypatch.setattr(video_detail, "FFMPEG_SECONDS_PER_CLIP_SECOND", 0.0)
+        readings, _ = await read_detail_segments(
+            sample_video, [_seg("00:04", "00:06")], content_id="vid", instruction="i", use_cache=False,
+        )
+        assert "ffmpeg did not finish within" in readings[0]["error"]
+        mock_gemini_client["generate_structured"].assert_not_awaited()
+        assert not (clip_cache_dir / "clips" / "vid").exists()
+
+    async def test_ffprobe_timeout_becomes_a_note(self, sample_video, clip_cache_dir, monkeypatch):
+        # Catches: a hung ffprobe raising out of auto_detail and discarding the
+        # main analysis result.
+        monkeypatch.setattr(video_detail, "FFPROBE_TIMEOUT_SECONDS", 0.0)
+        readings, notes = await read_detail_segments(
+            sample_video, [_seg("00:04", "00:06")], content_id="vid", instruction="i",
+        )
+        assert readings == []
+        assert "ffprobe did not finish within" in notes[0]
+
+    async def test_cache_key_includes_thinking_level(
+        self, sample_video, clip_cache_dir, mock_gemini_client,
+    ):
+        # Catches: a low-thinking reading served from cache for a high-thinking request.
+        mock_gemini_client["generate_structured"].return_value = DetailReading(on_screen_text="x")
+        args = dict(content_id="vid", instruction="i", use_cache=True)
+        await read_detail_segments(sample_video, [_seg("00:04", "00:06")], thinking_level="low", **args)
+        again, _ = await read_detail_segments(
+            sample_video, [_seg("00:04", "00:06")], thinking_level="high", **args,
+        )
+        assert "cached" not in again[0]
+        assert mock_gemini_client["generate_structured"].await_count == 2
 
     async def test_cached_reading_skips_gemini(self, sample_video, clip_cache_dir, mock_gemini_client):
         mock_gemini_client["generate_structured"].return_value = DetailReading(on_screen_text="x")
