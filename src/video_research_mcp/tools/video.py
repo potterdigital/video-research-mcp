@@ -32,9 +32,16 @@ from .video_url import (
     _extract_video_id,
     _normalize_youtube_url,
     _video_content,
-    _video_content_with_metadata,
 )
 from .youtube_download import download_youtube_video
+from .video_options import (
+    FpsParam,
+    MediaResolutionParam,
+    OffsetParam,
+    apply_video_options,
+    cache_key_suffix,
+    resolve_options,
+)
 from ..contract.pipeline import run_strict_pipeline
 
 logger = logging.getLogger(__name__)
@@ -130,6 +137,10 @@ async def video_analyze(
         "artifact rendering, and semantic validation. Produces richer output "
         "with strategy report, concept map, and HTML/Markdown artifacts."
     )] = False,
+    media_resolution: MediaResolutionParam = None,
+    start_offset: OffsetParam = None,
+    end_offset: OffsetParam = None,
+    fps: FpsParam = None,
 ) -> dict:
     """Analyze a video (YouTube URL or local file) with any instruction.
 
@@ -141,6 +152,13 @@ async def video_analyze(
     strict Pydantic models, parallel strategy/concept-map generation, artifact
     rendering, and quality gates. Returns richer output but takes longer.
 
+    media_resolution='high' only takes effect on uploaded files, so with
+    YOUTUBE_VIDEO_SOURCE=auto (the default) a YouTube URL is downloaded (up
+    to YOUTUBE_MAX_HEIGHT, default 1080) and uploaded for 'high' requests
+    only. If that fails, or the source mode is 'url', the call runs at the
+    default resolution and ``video_source_warning`` says so. Clipping and fps
+    work on URL parts directly.
+
     Args:
         url: YouTube video URL.
         file_path: Path to a local video file.
@@ -149,6 +167,10 @@ async def video_analyze(
         thinking_level: Gemini thinking depth.
         use_cache: Whether to use cached results.
         strict_contract: Run strict contract pipeline with quality gates.
+        media_resolution: 'low' or 'high' frame detail.
+        start_offset: Clip start ('90', '1:30', '01:01:30').
+        end_offset: Clip end.
+        fps: Frames sampled per second.
 
     Returns:
         Dict matching VideoResult schema (default), custom output_schema,
@@ -176,9 +198,22 @@ async def video_analyze(
         return make_tool_error(exc)
 
     try:
+        cfg = get_config()
+        options = resolve_options(
+            media_resolution, start_offset, end_offset, fps,
+            default_resolution=cfg.video_media_resolution,
+            model=cfg.default_model,
+        )
+    except ValueError as exc:
+        return make_tool_error(exc)
+
+    try:
         metadata_context = None
         local_filepath = ""
         screenshot_dir = ""
+        source_warning = ""
+        file_uri = ""
+        applied = options
         if url:
             clean_url = _normalize_youtube_url(url)
             content_id = _extract_video_id(url)
@@ -189,15 +224,60 @@ async def video_analyze(
             )
             if meta_ctx:
                 metadata_context = meta_ctx
-                contents = _video_content_with_metadata(
-                    clean_url, instruction, fps=fps_override
-                )
-            else:
-                contents = _video_content(clean_url, instruction)
+
+            # Gemini ignores per-part media resolution on YouTube URL parts,
+            # so 'high' needs the video downloaded and uploaded. Clipping and
+            # fps work on URL parts and need no download.
+            video_uri = clean_url
+            source_mode = "youtube_url"
+            mode = cfg.youtube_video_source
+            if mode == "download" or (mode == "auto" and options["media_resolution"] == "high"):
+                try:
+                    local_path = await download_youtube_video(content_id)
+                    file_uri = await _upload_large_file(
+                        local_path, "video/mp4", content_hash=local_path.stem
+                    )
+                    video_uri = file_uri
+                    local_filepath = str(local_path)
+                    # Report what was downloaded, not what was asked for.
+                    if local_path.stem.endswith("-single"):
+                        source_mode = "download@single"
+                        source_warning = (
+                            "ffmpeg not found: downloaded a single-file MP4 (usually 360p on "
+                            "YouTube), so small on-screen text may stay unreadable even at "
+                            "'high'. Install ffmpeg for downloads up to "
+                            f"{cfg.youtube_max_height}p."
+                        )
+                    else:
+                        source_mode = f"download@{cfg.youtube_max_height}"
+                except Exception as exc:
+                    logger.warning("Download path failed for %s: %s", content_id, exc)
+                    source_mode = "youtube_url_fallback"
+                    source_warning = f"Download failed ({exc}); analyzed the YouTube URL instead."
+            if not source_mode.startswith("download") and options["media_resolution"] == "high":
+                applied = {**options, "media_resolution": "low"}
+                source_warning = (
+                    f"{source_warning} media_resolution='high' was not applied: Gemini "
+                    "ignores it on YouTube URL parts, so this ran at the default resolution."
+                ).strip()
+            contents = apply_video_options(
+                _video_content(video_uri, instruction), applied, fps_fallback=fps_override
+            )
         else:
             contents, content_id, file_uri = await _video_file_content(file_path, instruction)
+            contents = apply_video_options(contents, options)
             source_label = file_path
             local_filepath = str(Path(file_path).expanduser().resolve())
+            source_mode = "local_file"
+
+        def _annotate(result: dict) -> dict:
+            result["local_filepath"] = local_filepath
+            result["screenshot_dir"] = screenshot_dir
+            result["video_source"] = source_mode
+            result["video_options"] = applied
+            if source_warning:
+                result["video_source_warning"] = source_warning
+            return result
 
         if strict_contract:
             result = await run_strict_pipeline(
@@ -208,9 +288,7 @@ async def video_analyze(
                 thinking_level=thinking_level,
                 metadata_context=metadata_context,
             )
-            result["local_filepath"] = local_filepath
-            result["screenshot_dir"] = screenshot_dir
-            return result
+            return _annotate(result)
 
         result = await analyze_video(
             contents,
@@ -223,12 +301,23 @@ async def video_analyze(
             metadata_context=metadata_context,
             local_filepath=local_filepath,
             screenshot_dir=screenshot_dir,
+            cache_instruction=instruction + cache_key_suffix(applied, source_mode),
         )
-        result["local_filepath"] = local_filepath
-        result["screenshot_dir"] = screenshot_dir
+        _annotate(result)
+        if result.get("detail_segments") and applied["media_resolution"] != "high":
+            result["detail_hint"] = (
+                "On-screen detail in detail_segments may not be fully legible at this "
+                "resolution. Re-run with media_resolution='high' and start_offset/end_offset "
+                "for each segment."
+            )
 
-        # Pre-warm context cache for future session reuse
-        if content_id:
+        # Pre-warm the session context cache for whole-video, default-option
+        # requests only, as before: YouTube URLs are skipped by prewarm_cache,
+        # and a clipped or high-detail part must not become the session cache.
+        is_default = applied["media_resolution"] == "low" and not (
+            applied["start_offset"] or applied["end_offset"] or applied["fps"] is not None
+        )
+        if content_id and is_default:
             cache_uri = clean_url if url else file_uri
             if cache_uri:
                 prewarm_cache(content_id, cache_uri)
@@ -261,8 +350,10 @@ async def _download_and_cache(
         return "", "", status, "", ""
 
     try:
+        # Keyed by file stem ("<id>-max<cap>" or "<id>-single") so an upload
+        # of a download made under a different cap is never reused.
         file_uri = await _upload_large_file(
-            local_path, "video/mp4", content_hash=video_id
+            local_path, "video/mp4", content_hash=local_path.stem
         )
     except Exception as exc:
         logger.warning("File API upload failed for %s: %s", video_id, exc)
@@ -301,8 +392,8 @@ async def video_create_session(
     description: Annotated[str, Field(description="Session purpose or focus area")] = "",
     download: Annotated[bool, Field(
         description="Download YouTube video locally for cached multi-turn sessions. "
-        "Slower startup (~2 min) but faster and cheaper per turn. "
-        "Requires yt-dlp installed."
+        "Slower startup but faster and cheaper per turn. "
+        "Requires yt-dlp (and ffmpeg for downloads above 360p)."
     )] = False,
 ) -> dict:
     """Create a persistent session for multi-turn video exploration.

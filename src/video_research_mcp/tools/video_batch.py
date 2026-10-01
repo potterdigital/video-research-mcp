@@ -9,6 +9,7 @@ from typing import Annotated
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from ..config import get_config
 from ..errors import make_tool_error
 from ..local_path_policy import enforce_local_access_root, resolve_path
 from ..models.video_batch import BatchVideoItem, BatchVideoResult
@@ -16,6 +17,13 @@ from ..types import ThinkingLevel, VideoDirectoryPath, coerce_json_param
 from .video import video_server
 from .video_core import analyze_video
 from .video_file import SUPPORTED_VIDEO_EXTENSIONS, _video_file_content
+from .video_options import (
+    FpsParam,
+    MediaResolutionParam,
+    apply_video_options,
+    cache_key_suffix,
+    resolve_options,
+)
 
 from video_research_mcp.tracing import trace
 
@@ -42,6 +50,8 @@ async def video_batch_analyze(
     )] = None,
     thinking_level: ThinkingLevel = "high",
     max_files: Annotated[int, Field(ge=1, le=50, description="Maximum files to process")] = 20,
+    media_resolution: MediaResolutionParam = None,
+    fps: FpsParam = None,
 ) -> dict:
     """Analyze all video files in a directory concurrently.
 
@@ -56,11 +66,22 @@ async def video_batch_analyze(
         output_schema: Optional JSON Schema dict for each result.
         thinking_level: Gemini thinking depth.
         max_files: Maximum number of files to process.
+        media_resolution: 'low' or 'high' frame detail for every file.
+        fps: Frames sampled per second for every file.
 
     Returns:
         Dict with directory, counts, and per-file results.
     """
     output_schema = coerce_json_param(output_schema, dict)
+
+    try:
+        options = resolve_options(
+            media_resolution, None, None, fps,
+            default_resolution=get_config().video_media_resolution,
+            model=get_config().default_model,
+        )
+    except ValueError as exc:
+        return make_tool_error(exc)
 
     try:
         dir_path = enforce_local_access_root(resolve_path(directory))
@@ -88,6 +109,7 @@ async def video_batch_analyze(
         async with semaphore:
             try:
                 contents, content_id, _ = await _video_file_content(str(fp), instruction)
+                contents = apply_video_options(contents, options)
                 result = await analyze_video(
                     contents,
                     instruction=instruction,
@@ -97,6 +119,7 @@ async def video_batch_analyze(
                     thinking_level=thinking_level,
                     use_cache=True,
                     local_filepath=str(fp.resolve()),
+                    cache_instruction=instruction + cache_key_suffix(options, "local_file"),
                 )
                 return BatchVideoItem(file_name=fp.name, file_path=str(fp), result=result)
             except Exception as exc:

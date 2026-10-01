@@ -51,6 +51,22 @@ def _set_dummy_api_key(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _youtube_url_mode(monkeypatch):
+    """Keep tests off the network: YouTube URLs are passed through, not downloaded.
+
+    Production defaults to YOUTUBE_VIDEO_SOURCE=auto, which shells out to
+    yt-dlp for media_resolution='high'. Tests that cover downloads set the
+    mode explicitly and mock the download and upload.
+    """
+    import video_research_mcp.config as cfg_mod
+
+    monkeypatch.setenv("YOUTUBE_VIDEO_SOURCE", "url")
+    cfg_mod._config = None
+    yield
+    cfg_mod._config = None
+
+
+@pytest.fixture(autouse=True)
 def _disable_tracing(monkeypatch):
     """Disable MLflow tracing in all tests to avoid real tracking-server calls.
 

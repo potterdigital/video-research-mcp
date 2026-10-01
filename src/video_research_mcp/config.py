@@ -154,6 +154,9 @@ class ServerConfig(BaseModel):
     retry_base_delay: float = Field(default=1.0)
     retry_max_delay: float = Field(default=60.0)
     youtube_api_key: str = Field(default="")
+    video_media_resolution: str = Field(default="low")
+    youtube_video_source: str = Field(default="auto")
+    youtube_max_height: int = Field(default=1080)
     session_db_path: str = Field(default="")
     weaviate_url: str = Field(default="")
     weaviate_api_key: str = Field(default="")
@@ -229,6 +232,29 @@ class ServerConfig(BaseModel):
             raise ValueError(f"WEAVIATE_VECTORIZER must be 'openai', 'weaviate', or 'ollama', got '{value}'")
         return v
 
+    @field_validator("video_media_resolution")
+    @classmethod
+    def validate_video_media_resolution(cls, value: str) -> str:
+        v = value.strip().lower()
+        if v not in ("low", "high"):
+            raise ValueError(f"VIDEO_MEDIA_RESOLUTION must be 'low' or 'high', got '{value}'")
+        return v
+
+    @field_validator("youtube_video_source")
+    @classmethod
+    def validate_youtube_video_source(cls, value: str) -> str:
+        v = value.strip().lower()
+        if v not in ("auto", "download", "url"):
+            raise ValueError(f"YOUTUBE_VIDEO_SOURCE must be 'auto', 'download', or 'url', got '{value}'")
+        return v
+
+    @field_validator("youtube_max_height")
+    @classmethod
+    def validate_youtube_max_height(cls, value: int) -> int:
+        if value < 144:
+            raise ValueError("YOUTUBE_MAX_HEIGHT must be >= 144")
+        return value
+
     @field_validator("deep_research_agent")
     @classmethod
     def validate_deep_research_agent(cls, value: str) -> str:
@@ -267,6 +293,9 @@ class ServerConfig(BaseModel):
             retry_base_delay=float(os.getenv("GEMINI_RETRY_BASE_DELAY", "1.0")),
             retry_max_delay=float(os.getenv("GEMINI_RETRY_MAX_DELAY", "60.0")),
             youtube_api_key=os.getenv("YOUTUBE_API_KEY", ""),
+            video_media_resolution=os.getenv("VIDEO_MEDIA_RESOLUTION", "low"),
+            youtube_video_source=os.getenv("YOUTUBE_VIDEO_SOURCE", "auto"),
+            youtube_max_height=int(os.getenv("YOUTUBE_MAX_HEIGHT", "1080")),
             session_db_path=os.getenv("GEMINI_SESSION_DB", ""),
             weaviate_url=weaviate_url,
             weaviate_api_key=os.getenv("WEAVIATE_API_KEY", ""),

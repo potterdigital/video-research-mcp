@@ -162,6 +162,9 @@ not loaded automatically.
 | `INFRA_MUTATIONS_ENABLED` | Allow runtime model changes and cache clearing; disabled by default |
 | `LOCAL_FILE_ACCESS_ROOTS` | OS-pathsep-separated list of directories the server may read local files from. **Strongly recommended.** See _Local file access boundaries_ below |
 | `LOCAL_FILE_ACCESS_ROOT` | Legacy single-root alias, used only when `LOCAL_FILE_ACCESS_ROOTS` is unset |
+| `VIDEO_MEDIA_RESOLUTION` | Default frame detail for video tools: `low` (the API default, about 70 tokens per frame on Gemini 3) or `high` (about 280). `high` needs a Gemini 3 model. Per-call `media_resolution` overrides it |
+| `YOUTUBE_VIDEO_SOURCE` | How `video_analyze` sends YouTube videos. `auto` (default): pass the URL, but download and upload when a call asks for `media_resolution="high"` (Gemini ignores it on URL parts). `download`: always download and upload. `url`: never download; `high` then falls back to the default resolution with a warning |
+| `YOUTUBE_MAX_HEIGHT` | Height cap for yt-dlp downloads, default `1080`; lower-resolution sources download at their native height. Downloads above 360p need ffmpeg to merge video and audio |
 
 Provider usage, Deep Research jobs, optional embeddings, and media generation can
 incur charges. The npm installer and MCP connection do not grant provider access
