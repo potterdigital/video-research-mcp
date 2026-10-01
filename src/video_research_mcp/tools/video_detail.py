@@ -268,15 +268,19 @@ async def read_detail_segments(
             cached = cache_load(content_id, "video_detail_read", cfg.default_model, instruction=key)
             if cached:
                 return {**entry, **cached, "cached": True}
-        # A unique name per call: two concurrent reads of the same video must
-        # not overwrite (ffmpeg -y) or unlink each other's clip.
-        fd, name = tempfile.mkstemp(
-            prefix=f"clip-{clip['start']:.0f}-{clip['end']:.0f}-", suffix=".mp4", dir=clip_dir,
-        )
-        os.close(fd)
-        out_path = Path(name)
+        out_path: Path | None = None
         async with semaphore:
             try:
+                # A unique name per call: two concurrent reads of the same video
+                # must not overwrite (ffmpeg -y) or unlink each other's clip.
+                # Re-create the directory first: a concurrent call that just
+                # finished may have removed it while it was empty.
+                clip_dir.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    prefix=f"clip-{clip['start']:.0f}-{clip['end']:.0f}-", suffix=".mp4", dir=clip_dir,
+                )
+                os.close(fd)
+                out_path = Path(name)
                 await trim_clip(source, clip["start"], clip["end"], out_path)
                 reading = await _read_clip(
                     out_path, reason=reason, instruction=instruction, thinking_level=thinking_level,
@@ -285,7 +289,8 @@ async def read_detail_segments(
                 logger.warning("High-resolution read failed for %s: %s", entry, exc)
                 return {**entry, "error": str(exc)}
             finally:
-                out_path.unlink(missing_ok=True)
+                if out_path is not None:
+                    out_path.unlink(missing_ok=True)
         data = reading.model_dump(mode="json")
         if use_cache:
             cache_save(content_id, "video_detail_read", cfg.default_model, data, instruction=key)

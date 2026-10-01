@@ -153,7 +153,7 @@ async def generate_agentic(
 
     Not wrapped in ``with_retry``: google-genai sends Interactions calls
     through its generated NextGen client, which retries 408/409/429/5XX with
-    backoff (3 retries, 30 s budget) when ``http_options`` has no
+    backoff (3 retries, 4 attempts in all) when ``http_options`` has no
     ``retry_options`` (``google/genai/_gaos/google_genai.py``,
     ``_translate_retry_config``; pinned by ``TestSdkRetries``). That differs
     from ``models.generate_content``, where ``retry_args(None)`` means a

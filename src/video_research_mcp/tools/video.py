@@ -471,13 +471,20 @@ async def _attach_detail_readings(
     if source_path is None:
         result["detail_notes"] = notes or ["No local copy of the video to cut clips from"]
         return
-    readings, plan_notes = await read_detail_segments(
-        source_path,
-        segments,
-        content_id=content_id,
-        instruction=instruction,
-        use_cache=use_cache,
-    )
+    try:
+        readings, plan_notes = await read_detail_segments(
+            source_path,
+            segments,
+            content_id=content_id,
+            instruction=instruction,
+            use_cache=use_cache,
+        )
+    except Exception as exc:
+        # The main analysis is already paid for; a failure in the optional
+        # re-read must not replace it with an error.
+        logger.warning("auto_detail failed for %s: %s", content_id, exc)
+        result["detail_notes"] = notes + [f"auto_detail re-read failed: {exc}"]
+        return
     result["detail_readings"] = readings
     if notes or plan_notes:
         result["detail_notes"] = notes + plan_notes

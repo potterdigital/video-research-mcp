@@ -328,3 +328,38 @@ class TestVideoAnalyzeAutoDetail:
         assert "HTTP 403" in result["detail_notes"][0]
         assert result["detail_readings"] == []
         assert "detail_hint" in result
+
+
+@needs_ffmpeg
+async def test_clip_file_failure_is_a_per_clip_error(sample_video, clip_cache_dir, mock_gemini_client):
+    # Catches: a clip-file creation failure (disk full, or the clip folder
+    # removed by a concurrent call finishing) escaping the per-clip guard and
+    # failing the whole call.
+    with patch.object(video_detail.tempfile, "mkstemp", side_effect=FileNotFoundError("gone")):
+        readings, _ = await read_detail_segments(
+            sample_video, [_seg("00:04", "00:06")], content_id="vid", instruction="i", use_cache=False,
+        )
+    assert readings[0]["error"] == "gone"
+
+
+async def test_auto_detail_failure_keeps_the_main_result(mock_gemini_client, monkeypatch, tmp_path):
+    # Catches: an unexpected error in the optional re-read replacing the
+    # already-paid main analysis with a tool error.
+    monkeypatch.setenv("YOUTUBE_VIDEO_SOURCE", "auto")
+    cfg_mod._config = None
+    mock_gemini_client["generate_structured"].return_value = VideoResult(
+        title="kept", detail_segments=[DetailSegment(start="01:00", end="01:10", reason="code")],
+    )
+    with (
+        patch("video_research_mcp.tools.video._youtube_metadata_pipeline",
+              new_callable=AsyncMock, return_value=(None, None)),
+        patch("video_research_mcp.tools.video.download_youtube_video",
+              new_callable=AsyncMock, return_value=tmp_path / "v.mp4"),
+        patch("video_research_mcp.tools.video.read_detail_segments",
+              new_callable=AsyncMock, side_effect=FileNotFoundError("clip dir gone")),
+    ):
+        result = await video_analyze(url=URL, use_cache=False, auto_detail=True)
+    assert "error" not in result
+    assert result["title"] == "kept"
+    assert "clip dir gone" in result["detail_notes"][-1]
+    cfg_mod._config = None
