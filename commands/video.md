@@ -38,9 +38,11 @@ Analyze the provided video source with progressive memory saving and automatic v
 If the source is a YouTube URL, persist a local copy for reuse.
 
 1. Compute `video_id` from the URL and set target path: `<memory-dir>/gr/media/videos/<video_id>.mp4`
-2. If the target file is missing, download with:
+2. If the target file is missing, download with the same format rule the server uses (H.264 up to 1080p plus m4a audio, merged by ffmpeg; without ffmpeg, a single-file MP4, usually 360p on YouTube):
    ```bash
-   yt-dlp --no-playlist -q -f "mp4[height<=720]/mp4/best[ext=mp4]" \
+   yt-dlp --no-playlist -q \
+     -f "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/b[height<=1080][ext=mp4]/b[ext=mp4]" \
+     --merge-output-format mp4 \
      -o "<memory-dir>/gr/media/videos/<video_id>.mp4" \
      "https://youtube.com/watch?v=<video_id>"
    ```

@@ -218,7 +218,7 @@ async function install(mode, force, forceMcpOverwrite) {
     } else if (p.required) {
       ui.warn(`${p.name} not found \u2014 ${p.hint}`);
     } else {
-      ui.info(`${p.name} not found (optional) \u2014 ${p.hint}`);
+      ui.info(`${p.name} not found (optional): ${p.hint}`);
     }
   }
   ui.blank();

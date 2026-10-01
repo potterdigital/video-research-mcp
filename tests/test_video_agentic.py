@@ -306,7 +306,12 @@ class TestErrors:
             status="completed", output_text="not json", usage=None, errors=None,
         )
         result = await video_analyze(url=URL, processing="agentic", use_cache=False)
-        assert "error" in result
+        # Catches: unparseable agentic output returned as an empty VideoResult
+        # or reported as a retryable API failure.
+        assert "Invalid JSON" in result["error"]
+        assert "VideoResult" in result["error"]
+        assert result["retryable"] is False
+        assert "title" not in result
 
 
 class TestSdkRetries:

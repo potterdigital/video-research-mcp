@@ -369,8 +369,12 @@ class TestVideoAnalyzeSources:
         mock_gemini_client["generate_structured"].assert_not_called()
 
     async def test_invalid_offset_returns_tool_error(self, mock_gemini_client):
+        # Catches: a bad offset reaching Gemini, or failing with a message
+        # that does not tell the caller which formats are accepted.
         result = await video_analyze(url=URL, start_offset="nonsense")
-        assert "error" in result
+        assert result["error"].startswith("Invalid offset 'nonsense'")
+        assert "MM:SS" in result["error"]
+        assert result["retryable"] is False
         mock_gemini_client["generate_structured"].assert_not_called()
 
     async def test_local_file_gets_high(self, mock_gemini_client, tmp_path):

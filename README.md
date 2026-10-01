@@ -203,6 +203,8 @@ Two independent layers protect against this:
    `*.gpg`, `*.p12`, `*.pfx`, `credentials*`, `.env`, `.env.*`, `.netrc`,
    `.npmrc`, `.pypirc`, `htpasswd*`, `*.keystore`, `*.jks`. This is defence
    in depth: even an explicitly-allowed root cannot override the deny-list.
+   Because `*.key` matches by extension, Apple Keynote `.key` files are
+   blocked too; export a deck to PDF or video to analyze it.
 
 For maximum safety, configure `LOCAL_FILE_ACCESS_ROOTS` to the narrowest set
 of directories you actually need the server to read from, and keep secrets

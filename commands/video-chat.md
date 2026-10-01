@@ -23,7 +23,7 @@ Start an interactive Q&A session with a video, progressively building knowledge.
 4. Present the video title and session info. If `download_status` is present, explain:
    - `"downloaded"` + `cache_status="cached"`: "Video downloaded and cached — each turn will be fast and cost-efficient."
    - `"downloaded"` + `cache_status="uncached"`: "Video downloaded but cache creation failed — still faster than streaming (no re-fetch per turn)."
-   - `"unavailable"`: "yt-dlp not found. Install it with `brew install yt-dlp` for cached sessions. Continuing with streaming."
+   - `"unavailable"`: "yt-dlp not found. Install it with `uv tool install yt-dlp` for cached sessions. Continuing with streaming."
    - `"failed"`: "Download failed. Continuing with streaming."
 
 ## Initialize Memory

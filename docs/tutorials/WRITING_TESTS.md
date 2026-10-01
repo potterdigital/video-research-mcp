@@ -259,7 +259,7 @@ async-client boundary where the implementation does.
 | `test_cache*.py`, `test_sessions.py`, `test_persistence.py` | Local and provider state ownership |
 | `test_video_contract*.py`, `test_validation.py` | Strict output, quality checks, and artifacts |
 | `test_weaviate_*.py`, `test_knowledge_*.py` | Knowledge storage, schemas, and retrieval |
-| `test_url_policy.py`, `test_video_url.py` | URL and source boundaries |
+| `test_url_policy.py` | URL and source boundaries |
 | `installer.test.js`, installer export tests | Plugin installation behavior and tracked state matrix |
 
 For a new tool, follow [Adding a Tool](ADDING_A_TOOL.md). Before delivery, run the
