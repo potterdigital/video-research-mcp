@@ -16,6 +16,18 @@ class Timestamp(BaseModel):
     description: str = Field(default="", description="What is happening at this exact moment")
 
 
+class DetailSegment(BaseModel):
+    """A time range whose on-screen detail needs a high-resolution re-read."""
+
+    start: str = Field(default="", description="Segment start in MM:SS or HH:MM:SS")
+    end: str = Field(default="", description="Segment end in MM:SS or HH:MM:SS")
+    reason: str = Field(
+        default="",
+        description="What on-screen detail matters here (slide text, code, numbers, UI) "
+        "and why it may not be fully legible at the current resolution",
+    )
+
+
 class VideoResult(BaseModel):
     """Default structured output for video_analyze.
 
@@ -35,6 +47,12 @@ class VideoResult(BaseModel):
     )
     topics: list[str] = Field(default_factory=list)
     sentiment: str = ""
+    detail_segments: list[DetailSegment] = Field(
+        default_factory=list,
+        description="Time ranges where small on-screen text, code, numbers or UI "
+        "carry content that may be illegible or only partly legible at the "
+        "resolution used. Empty when nothing on screen needs a closer read.",
+    )
 
 
 # ── Session models (stateful, not structured-output) ─────────────────────────

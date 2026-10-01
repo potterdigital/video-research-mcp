@@ -29,6 +29,7 @@ SUPPORTED_VIDEO_EXTENSIONS: dict[str, str] = {
 }
 
 LARGE_FILE_THRESHOLD = 20 * 1024 * 1024  # 20 MB
+FILE_API_MAX_BYTES = 2 * 1000 ** 3  # Gemini File API per-file limit ("2 GB")
 _UPLOAD_LOCKS: dict[str, asyncio.Lock] = {}
 _UPLOAD_LOCKS_GUARD = asyncio.Lock()
 
@@ -126,6 +127,15 @@ def _save_upload_cache(content_hash: str, file_uri: str, file_name: str) -> None
     }))
 
 
+def _active_timeout(size_bytes: int) -> float:
+    """Seconds to wait for an upload to become ACTIVE: 120 s plus 5 minutes per GB.
+
+    Large 1080p files can take longer than the flat 120 s to process; a
+    timeout there falls back and re-uploads on the next call.
+    """
+    return 120 + 300 * size_bytes / 1000 ** 3
+
+
 async def _upload_large_file(path: Path, mime_type: str, content_hash: str = "") -> str:
     """Upload via Gemini File API, wait for ACTIVE state, return the file URI.
 
@@ -133,6 +143,12 @@ async def _upload_large_file(path: Path, mime_type: str, content_hash: str = "")
     cached file is still ACTIVE on the server, the upload is skipped entirely.
     This prevents re-upload loops when MCP clients retry after a timeout.
     """
+    size = path.stat().st_size
+    if size > FILE_API_MAX_BYTES:
+        raise ValueError(
+            f"{path.name} is {size / 1000 ** 3:.2f} GB; the Gemini File API accepts "
+            "files up to 2 GB. Use a shorter clip or a lower YOUTUBE_MAX_HEIGHT."
+        )
     client = GeminiClient.get()
 
     if not content_hash:
@@ -141,7 +157,7 @@ async def _upload_large_file(path: Path, mime_type: str, content_hash: str = "")
             config=types.UploadFileConfig(mime_type=mime_type),
         )
         logger.info("Uploaded %s → %s (state=%s)", path.name, uploaded.uri, uploaded.state)
-        await _wait_for_active(client, uploaded.name)
+        await _wait_for_active(client, uploaded.name, timeout=_active_timeout(size))
         return uploaded.uri
 
     async with _UPLOAD_LOCKS_GUARD:
@@ -154,7 +170,9 @@ async def _upload_large_file(path: Path, mime_type: str, content_hash: str = "")
                 await _wait_for_active(client, cached["file_name"], timeout=10)
                 logger.info("Upload cache hit for %s → %s", path.name, cached["file_uri"])
                 return cached["file_uri"]
-            except (RuntimeError, TimeoutError, KeyError):
+            except Exception:
+                # Includes the API's not-found error once the File API's
+                # 48 hour retention has expired the cached upload.
                 logger.debug("Stale upload cache for %s, re-uploading", path.name)
 
         uploaded = await client.aio.files.upload(
@@ -162,7 +180,7 @@ async def _upload_large_file(path: Path, mime_type: str, content_hash: str = "")
             config=types.UploadFileConfig(mime_type=mime_type),
         )
         logger.info("Uploaded %s → %s (state=%s)", path.name, uploaded.uri, uploaded.state)
-        await _wait_for_active(client, uploaded.name)
+        await _wait_for_active(client, uploaded.name, timeout=_active_timeout(size))
         _save_upload_cache(content_hash, uploaded.uri, uploaded.name)
         return uploaded.uri
 

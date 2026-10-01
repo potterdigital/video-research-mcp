@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `media_resolution` (`low` / `high`), `start_offset`, `end_offset` and `fps` on `video_analyze`; `media_resolution` and `fps` on `video_batch_analyze`. The server previously never set a media resolution, so every frame was read at the API default.
+- `detail_segments` in the default `video_analyze` result: time ranges where on-screen text may not be fully legible at the resolution used, with a `detail_hint` when the call ran below `high`. Intended for a cheap whole-video pass followed by `high` on just those ranges.
+- `VIDEO_MEDIA_RESOLUTION`, `YOUTUBE_VIDEO_SOURCE` and `YOUTUBE_MAX_HEIGHT` settings.
+- Uploads over the File API's 2 GB limit fail with a clear message before uploading.
+
+### Changed
+
+- With `media_resolution="high"`, YouTube URLs are downloaded and uploaded (`YOUTUBE_VIDEO_SOURCE=auto`), because per-part resolution had no effect on URL parts in testing on gemini-3.5-flash. Default requests still pass the URL. If the download fails, the call runs at the default resolution and `video_source_warning` says so.
+- yt-dlp downloads cap at `YOUTUBE_MAX_HEIGHT` (1080) instead of 720 and prefer H.264 with merged m4a audio. Without ffmpeg only single-file MP4s are requested, reported as `download@single` with a warning. Unmerged stream files are removed when a merge fails, and the cache file name records the height cap.
+- The `video_analyze` result cache key includes resolution, clip, fps and source.
+- Upload processing waits scale with file size (120 s plus 5 minutes per GB) instead of a flat 120 s.
+
+### Fixed
+
+- A cached File API upload past its 48 hour retention is re-uploaded instead of failing every later request for that file.
+
 ## [0.6.1] - 2026-05-21
 
 ### Changed

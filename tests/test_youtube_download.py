@@ -41,7 +41,7 @@ class TestDownloadYoutubeVideo:
 
     async def test_returns_cached_download(self, download_dir):
         """GIVEN file already exists WHEN download called THEN skips re-download."""
-        cached_file = download_dir / f"{TEST_VIDEO_ID}.mp4"
+        cached_file = download_dir / f"{TEST_VIDEO_ID}-max1080.mp4"
         cached_file.write_bytes(b"fake video content")
 
         with patch("shutil.which", return_value="/usr/bin/yt-dlp"):
@@ -51,7 +51,7 @@ class TestDownloadYoutubeVideo:
 
     async def test_download_succeeds(self, download_dir):
         """GIVEN yt-dlp succeeds WHEN download called THEN returns path to file."""
-        output_path = download_dir / f"{TEST_VIDEO_ID}.mp4"
+        output_path = download_dir / f"{TEST_VIDEO_ID}-max1080.mp4"
 
         mock_proc = MagicMock()
         mock_proc.returncode = 0
@@ -92,7 +92,7 @@ class TestDownloadYoutubeVideo:
 
     async def test_skips_empty_cached_file(self, download_dir):
         """GIVEN an empty cached file WHEN download called THEN re-downloads."""
-        cached_file = download_dir / f"{TEST_VIDEO_ID}.mp4"
+        cached_file = download_dir / f"{TEST_VIDEO_ID}-max1080.mp4"
         cached_file.write_bytes(b"")  # empty = partial/failed download
 
         mock_proc = MagicMock()
@@ -118,7 +118,7 @@ class TestDownloadYoutubeVideo:
     async def test_uses_target_dir_when_provided(self, tmp_path):
         """GIVEN target_dir WHEN download called THEN writes output in that directory."""
         target_dir = tmp_path / "media" / "videos"
-        output_path = target_dir / f"{TEST_VIDEO_ID}.mp4"
+        output_path = target_dir / f"{TEST_VIDEO_ID}-max1080.mp4"
 
         mock_proc = MagicMock()
         mock_proc.returncode = 0

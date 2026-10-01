@@ -327,6 +327,9 @@ export WEAVIATE_API_KEY="your-key"
 | `EXPLAINER_TTS_PROVIDER` | `"mock"` | TTS provider: mock, elevenlabs, openai, gemini, edge |
 | `LOCAL_FILE_ACCESS_ROOTS` | `""` | OS-pathsep-separated list of directories the server may read from. **Strongly recommended.** See _Local file access boundaries_ below. |
 | `LOCAL_FILE_ACCESS_ROOT` | `""` | Legacy single-root alias. Used only when `LOCAL_FILE_ACCESS_ROOTS` is unset. |
+| `VIDEO_MEDIA_RESOLUTION` | `low` | Default frame detail for video tools: `low` (the API default, about 70 tokens per frame on Gemini 3) or `high` (about 280). `high` needs a Gemini 3 model. Per-call `media_resolution` overrides it. |
+| `YOUTUBE_VIDEO_SOURCE` | `auto` | How `video_analyze` sends YouTube videos. `auto`: pass the URL, but download and upload when a call asks for `media_resolution="high"` (Gemini ignores it on URL parts). `download`: always download and upload. `url`: never download; `high` then falls back to the default resolution with a warning. |
+| `YOUTUBE_MAX_HEIGHT` | `1080` | Height cap for yt-dlp downloads; lower-resolution sources download at their native height. Downloads above 360p need ffmpeg to merge video and audio. |
 
 ### Local file access boundaries
 

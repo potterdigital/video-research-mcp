@@ -18,7 +18,10 @@ _ANALYSIS_PREAMBLE = (
     "Analyze this video thoroughly. For timestamps, use PRECISE times from the "
     "actual video (not rounded estimates). Extract AT LEAST 5-10 key points. "
     "Include specific details, quotes, or data mentioned in the video. "
-    "For each timestamp, describe what is happening at that exact moment."
+    "For each timestamp, describe what is happening at that exact moment. "
+    "Never guess at on-screen text you cannot read clearly: transcribe only "
+    "what is legible, and list every range where small text, code, numbers "
+    "or UI detail matters but is not fully legible in detail_segments."
 )
 
 
@@ -48,6 +51,7 @@ async def analyze_video(
     metadata_context: str | None = None,
     local_filepath: str = "",
     screenshot_dir: str = "",
+    cache_instruction: str | None = None,
 ) -> dict:
     """Run the video analysis pipeline shared by video_analyze and video_batch_analyze.
 
@@ -62,14 +66,18 @@ async def analyze_video(
         metadata_context: Optional video metadata context to prepend to the prompt.
         local_filepath: Local filesystem path to the analyzed/downloaded video.
         screenshot_dir: Local filesystem path to extracted screenshots.
+        cache_instruction: Cache key text when it must differ from the prompt
+            instruction (e.g. instruction plus video options). Defaults to
+            ``instruction``.
 
     Returns:
         Dict matching VideoResult schema (default) or the custom output_schema.
     """
     cfg = get_config()
+    cache_key = cache_instruction if cache_instruction is not None else instruction
 
     if use_cache:
-        cached = cache_load(content_id, "video_analyze", cfg.default_model, instruction=instruction)
+        cached = cache_load(content_id, "video_analyze", cfg.default_model, instruction=cache_key)
         if cached:
             cached["cached"] = True
             return cached
@@ -104,7 +112,7 @@ async def analyze_video(
 
     result["source"] = source_label
     if use_cache:
-        cache_save(content_id, "video_analyze", cfg.default_model, result, instruction=instruction)
+        cache_save(content_id, "video_analyze", cfg.default_model, result, instruction=cache_key)
     from ..weaviate_store import store_video_analysis, extract_and_store_graph
     await store_video_analysis(
         result,

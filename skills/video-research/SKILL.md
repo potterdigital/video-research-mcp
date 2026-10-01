@@ -75,11 +75,19 @@ video_analyze(
   instruction: str = "...",     # What to analyze (default: comprehensive analysis)
   output_schema: dict | None,   # Custom JSON Schema for response shape
   thinking_level: str = "high", # minimal | low | medium | high
-  use_cache: bool = True        # Cache results by instruction hash
+  use_cache: bool = True,       # Cache results by instruction + video options
+  media_resolution: str | None, # low (API default, ~70 tokens/frame) | high (~280; Gemini 3 only)
+  start_offset: str | None,     # Clip start: "90", "1:30", "01:01:30"
+  end_offset: str | None,       # Clip end
+  fps: float | None             # Frames sampled per second (Gemini default 1)
 )
 ```
 
-**Default output** (VideoResult + metadata): `{title, summary, key_points[], timestamps[{time, description}], topics[], sentiment, source, local_filepath, screenshot_dir}`
+**Default output** (VideoResult + metadata): `{title, summary, key_points[], timestamps[{time, description}], topics[], sentiment, detail_segments[{start, end, reason}], source, local_filepath, screenshot_dir, video_source, video_options}`
+
+**Reading on-screen text (slides, code, numbers, UI):** at `low`, small text can come back wrong, and the model may not say it could not read it. Analyze the whole video at `low` first; it returns `detail_segments` for ranges where on-screen text matters, plus a `detail_hint`. Re-run each segment with `media_resolution="high"` and `start_offset`/`end_offset`. A short clip at `high` costs a fraction of the whole video at `high`.
+
+**YouTube sources:** Gemini ignores `media_resolution` on YouTube URL parts, so a `high` request downloads the video (up to `YOUTUBE_MAX_HEIGHT`, default 1080) and uploads it. Clipping and fps work on URLs directly. `video_source` reports `youtube_url`, `download@<cap>`, `youtube_url_fallback`, or `local_file`; `video_source_warning` explains any fallback.
 
 **Writing good instructions:**
 - BAD: "analyze this video" (too vague, just use the default)
