@@ -1,4 +1,4 @@
-"""Tests for local_path_policy — multi-root access boundaries."""
+"""Tests for local_path_policy: multi-root access boundaries."""
 
 from __future__ import annotations
 
@@ -217,7 +217,7 @@ class TestSensitivePathDenyList:
     def test_sensitive_path_denied_even_when_no_roots_configured(
         self, tmp_path, monkeypatch, clean_config
     ):
-        # Guards: the deny-list is a hard floor — applies even when the
+        # Guards: the deny-list is a hard floor that applies even when the
         # operator forgot to set LOCAL_FILE_ACCESS_ROOTS at all.
         monkeypatch.delenv("LOCAL_FILE_ACCESS_ROOT", raising=False)
         monkeypatch.delenv("LOCAL_FILE_ACCESS_ROOTS", raising=False)

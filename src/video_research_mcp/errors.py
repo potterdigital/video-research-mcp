@@ -61,7 +61,7 @@ def categorize_error(error: Exception) -> tuple[ErrorCategory, str]:
     if isinstance(error, SensitivePathError):
         return (
             ErrorCategory.SENSITIVE_PATH_DENIED,
-            "Path matches sensitive-path deny-list (.ssh, .aws, *.pem, .env*, etc) — these paths are always blocked to prevent credential exfiltration",
+            "Path matches sensitive-path deny-list (.ssh, .aws, *.pem, .env*, etc). These paths are always blocked to prevent credential exfiltration",
         )
     if isinstance(error, PermissionError):
         return (

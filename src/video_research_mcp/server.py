@@ -73,7 +73,7 @@ def _warn_if_no_local_access_roots() -> None:
     if cfg.local_file_access_roots:
         return
     logger.warning(
-        "LOCAL_FILE_ACCESS_ROOTS is not set — local file tools will accept "
+        "LOCAL_FILE_ACCESS_ROOTS is not set, so local file tools will accept "
         "any path the OS user can read (the sensitive-path deny-list still "
         "applies). Set LOCAL_FILE_ACCESS_ROOTS=<dir>[%s<dir>...] to restrict "
         "the server to specific directories. See README 'Local file access "

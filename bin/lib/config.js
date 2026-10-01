@@ -81,7 +81,7 @@ function entriesEqual(a, b) {
 /**
  * Merge MCP_SERVERS into the config file.
  *
- * Existing user-configured entries are preserved by default — the installer
+ * Existing user-configured entries are preserved by default: the installer
  * only writes a server entry when it is absent or matches the planned values
  * exactly. Pass ``forceOverwrite: true`` (mapped to the ``--force-mcp-overwrite``
  * CLI flag) to reset ``command`` and ``args`` of known entries to the installer
@@ -243,7 +243,7 @@ function ensureEnvFile() {
       '# Optional — OpenAI TTS (budget alternative)',
       '# OPENAI_API_KEY=',
       '',
-      '# Strongly recommended — restrict which directories the server can read.',
+      '# Strongly recommended: restrict which directories the server can read.',
       '# Tools that ingest local files accept paths supplied by the LLM, so',
       '# untrusted content (web pages, transcripts) can induce reads of files',
       '# you did not intend. Configure an OS-pathsep-separated allow-list and',

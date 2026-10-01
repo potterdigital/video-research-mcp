@@ -77,10 +77,10 @@ async function promptMode() {
 }
 
 /**
- * Check runtime prerequisites — warn if missing, never block.
+ * Check runtime prerequisites: warn if missing, never block.
  *
- * `required: true`  — the MCP server cannot start without these.
- * `required: false` — only needed by specific commands (yt-dlp for /gr:video
+ * `required: true`: the MCP server cannot start without these.
+ * `required: false`: only needed by specific commands (yt-dlp for /gr:video
  * YouTube downloads, ffmpeg for frame extraction in /gr:video and
  * /gr:video-chat). Missing optional deps cause graceful degradation, not
  * failure: `/gr:video` skips the local download and frame extraction.
@@ -195,7 +195,7 @@ function showStatus(mode) {
       );
     }
   } catch {
-    // Best-effort — never block --check on config errors.
+    // Best-effort: never block --check on config errors.
   }
 }
 
@@ -260,7 +260,7 @@ async function install(mode, force, forceMcpOverwrite) {
     }
     for (const conflict of result.skipsConflicting) {
       ui.warn(
-        `Preserved existing '${conflict.name}' entry — differs from installer default. ` +
+        `Preserved existing '${conflict.name}' entry: it differs from the installer default. ` +
         `Pass --force-mcp-overwrite to replace.`,
       );
     }
