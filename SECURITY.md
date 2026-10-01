@@ -27,9 +27,15 @@ boundaries include:
   validation requires HTTPS and rejects embedded credentials and blocked IP
   ranges. Document downloads also validate redirects, cap size, and inspect peer
   addresses when the transport exposes them.
-- **Local files.** Resolved paths are constrained by `LOCAL_FILE_ACCESS_ROOT` when
-  configured. Without it, local input access is bounded by the process user's
-  filesystem permissions. This setting does not sandbox the external renderer.
+- **Local files.** Resolved paths are constrained by `LOCAL_FILE_ACCESS_ROOTS`
+  (one or more directories, OS path separator between them; the legacy
+  single-directory `LOCAL_FILE_ACCESS_ROOT` is used only when it is unset) when
+  configured. Without either, local input access is bounded by the process
+  user's filesystem permissions and the server logs a startup warning. In both
+  cases a sensitive-path deny-list (`.ssh/`, `.aws/`, `.gnupg/`, `*.pem`,
+  `.env`, `credentials*` and similar) rejects credential files with
+  `SENSITIVE_PATH_DENIED`, even inside an allowed root. This setting does not
+  sandbox the external renderer.
 - **Runtime mutation.** Cache clearing and configuration changes require
   `INFRA_MUTATIONS_ENABLED=true`; when `INFRA_ADMIN_TOKEN` is configured, the
   matching token is also required. Read-only inspection does not require it.
@@ -52,7 +58,7 @@ model output is correct or safe to execute.
   file. Restrict credential-file permissions and never commit or share values.
 - Do not assume a client expands `${VARIABLE}` strings. Use its supported secret
   mechanism or the shared `.env` file, then verify configuration without exposing keys.
-- Set `LOCAL_FILE_ACCESS_ROOT` when local input access needs a narrower boundary.
+- Set `LOCAL_FILE_ACCESS_ROOTS` when local input access needs a narrower boundary.
   Keep mutation disabled unless it is needed; configure a token when enabling it.
 - Inspect customized workflows before an installer upgrade with `--force`.
   That flag can overwrite them and remove modified obsolete files.

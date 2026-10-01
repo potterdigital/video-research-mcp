@@ -88,7 +88,10 @@ authentication and selected analysis content are sent to configured services.
 | `WEAVIATE_URL`, `WEAVIATE_API_KEY` | Storage disabled when the URL is empty | Connect the optional knowledge store |
 | `MLFLOW_TRACKING_URI` | Tracing disabled without a URI | Connect a tracking server and install the tracing extra |
 | `S2_API_KEY` | Optional | Authenticate Semantic Scholar requests |
-| `LOCAL_FILE_ACCESS_ROOT` | No configured root restriction | Limit supported local-file operations to a directory |
+| `LOCAL_FILE_ACCESS_ROOTS` | No configured root restriction (startup warning); credential paths are always denied | Limit supported local-file operations to one or more directories, separated by the OS path separator (`:` on macOS and Linux). The legacy single-directory `LOCAL_FILE_ACCESS_ROOT` is used only when this is unset |
+| `VIDEO_MEDIA_RESOLUTION` | `low` | Use `high` to read small on-screen text by default (Gemini 3 models only; about 280 tokens per frame instead of about 70) |
+| `YOUTUBE_VIDEO_SOURCE` | `auto`: pass the URL, download and upload only for `high` | Use `download` to always upload, or `url` to never download |
+| `YOUTUBE_MAX_HEIGHT` | `1080` | Lower the yt-dlp download height cap |
 | `INFRA_MUTATIONS_ENABLED` | `false` | Allow model changes and cache clearing through tools |
 | `INFRA_ADMIN_TOKEN` | Optional | Require a token for permitted infrastructure mutations |
 

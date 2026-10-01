@@ -347,7 +347,8 @@ process environment variables take precedence.
 | Cache lifetime | `GEMINI_CACHE_DIR`, `GEMINI_CACHE_TTL_DAYS`, `GEMINI_CONTEXT_CACHE_TTL`, `CLEAR_CACHE_ON_SHUTDOWN` |
 | Session bounds | `GEMINI_MAX_SESSIONS`, `GEMINI_SESSION_TIMEOUT_HOURS`, `GEMINI_SESSION_MAX_TURNS`, `GEMINI_SESSION_DB` |
 | Document bounds | `DOC_MAX_DOWNLOAD_BYTES`, `RESEARCH_DOCUMENT_MAX_SOURCES`, `RESEARCH_DOCUMENT_PHASE_CONCURRENCY` |
-| Local read boundary | `LOCAL_FILE_ACCESS_ROOT` |
+| Local read boundary | `LOCAL_FILE_ACCESS_ROOTS`, with legacy `LOCAL_FILE_ACCESS_ROOT` fallback |
+| Video input detail | `VIDEO_MEDIA_RESOLUTION`, `YOUTUBE_VIDEO_SOURCE`, `YOUTUBE_MAX_HEIGHT` |
 | Knowledge storage | `WEAVIATE_URL`, `WEAVIATE_API_KEY`, `WEAVIATE_VECTORIZER`, `WEAVIATE_AUTO_MIGRATE` |
 | Search enrichment | `COHERE_API_KEY`, `RERANKER_ENABLED`, `FLASH_SUMMARIZE` |
 | Runtime mutation policy | `INFRA_MUTATIONS_ENABLED`, `INFRA_ADMIN_TOKEN` |
@@ -375,7 +376,9 @@ multicast, and reserved ranges. Server-side document downloads use
 checks peer IP when the HTTP transport exposes it. That download policy is
 separate from provider-side URL Context retrieval.
 
-Local file workflows resolve paths and apply `LOCAL_FILE_ACCESS_ROOT` when set.
+Local file workflows resolve paths, reject credential paths on the sensitive-path
+deny-list, and apply `LOCAL_FILE_ACCESS_ROOTS` (or legacy `LOCAL_FILE_ACCESS_ROOT`)
+when set.
 Video inputs also require an existing regular file with a supported extension.
 Use the shared policies when adding inputs; tests cover URL attacks, redirects,
 size caps, path boundaries, and upload behavior.

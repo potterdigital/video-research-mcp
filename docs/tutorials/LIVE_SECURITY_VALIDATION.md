@@ -106,8 +106,10 @@ Connect the actual MCP client to a staging server. Record the source revision,
 server launch command and relevant effective settings, then exercise:
 
 1. `content_analyze(url="http://example.com")`: expect `URL_POLICY_BLOCKED`.
-2. With `LOCAL_FILE_ACCESS_ROOT` set, analyze an out-of-root file: expect
-   `PERMISSION_DENIED`. Also verify an allowed file through the intended path.
+2. With `LOCAL_FILE_ACCESS_ROOTS` (or legacy `LOCAL_FILE_ACCESS_ROOT`) set, analyze
+   an out-of-root file: expect `PERMISSION_DENIED`. Also verify an allowed file
+   through the intended path, and that a credential-like file inside an allowed
+   root (for example `.env`) returns `SENSITIVE_PATH_DENIED`.
 3. With `INFRA_MUTATIONS_ENABLED=false`, attempt an `infra_configure` mutation:
    expect `PERMISSION_DENIED`.
 4. With mutations enabled and `INFRA_ADMIN_TOKEN` set, test a wrong token and
