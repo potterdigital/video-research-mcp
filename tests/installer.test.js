@@ -201,3 +201,109 @@ test('action planning rejects unsafe paths even without reading a manifest file'
   assert.throws(() => computeActions(home, home, {}, { files: { '/outside': {} } }, false),
     /Unsafe install manifest path/);
 });
+
+// ---------------------------------------------------------------------------
+// mergeConfig(): preserve user-customized MCP entries unless forced.
+// Each test names the regression it guards against.
+// ---------------------------------------------------------------------------
+
+function mergeFixture(t) {
+  return path.join(fixture(t), '.mcp.json');
+}
+
+function writeJSON(p, data) {
+  fs.writeFileSync(p, JSON.stringify(data, null, 2) + '\n');
+}
+
+test('mergeConfig fresh install writes every MCP_SERVERS entry', (t) => {
+  // Guards: the installer failing to seed entries on a clean machine.
+  const cfgPath = mergeFixture(t);
+  const result = config.mergeConfig(cfgPath);
+  const expectedNames = Object.keys(config.MCP_SERVERS).sort();
+  assert.deepEqual(result.writes.sort(), expectedNames);
+  assert.deepEqual(result.skipsMatching, []);
+  assert.deepEqual(result.skipsConflicting, []);
+  const onDisk = config.readConfig(cfgPath);
+  for (const name of expectedNames) {
+    assert.deepEqual(onDisk.mcpServers[name], config.MCP_SERVERS[name]);
+  }
+});
+
+test('mergeConfig skips exact-match entries silently', (t) => {
+  // Guards: noisy "updated" output when nothing changed.
+  const cfgPath = mergeFixture(t);
+  writeJSON(cfgPath, { mcpServers: { ...config.MCP_SERVERS } });
+  const result = config.mergeConfig(cfgPath);
+  assert.deepEqual(result.writes, []);
+  assert.deepEqual(result.skipsMatching.sort(), Object.keys(config.MCP_SERVERS).sort());
+  assert.deepEqual(result.skipsConflicting, []);
+});
+
+test('mergeConfig preserves a user-customized playwright entry by default', (t) => {
+  // Guards: the installer silently replacing a user's pinned Playwright MCP
+  // version on every upgrade.
+  const cfgPath = mergeFixture(t);
+  const userEntry = { command: 'npx', args: ['@playwright/mcp@1.2.3', '--headless', '--caps=vision'] };
+  writeJSON(cfgPath, { mcpServers: { playwright: userEntry } });
+  const result = config.mergeConfig(cfgPath);
+  assert.equal(result.skipsConflicting.length, 1);
+  assert.equal(result.skipsConflicting[0].name, 'playwright');
+  assert.deepEqual(config.readConfig(cfgPath).mcpServers.playwright, userEntry);
+});
+
+test('mergeConfig forceOverwrite replaces user command and args', (t) => {
+  // Guards: the --force-mcp-overwrite escape hatch must still apply defaults.
+  const cfgPath = mergeFixture(t);
+  writeJSON(cfgPath, { mcpServers: { playwright: { command: 'npx', args: ['@playwright/mcp@1.2.3'] } } });
+  const result = config.mergeConfig(cfgPath, { forceOverwrite: true });
+  assert.ok(result.writes.includes('playwright'));
+  assert.deepEqual(config.readConfig(cfgPath).mcpServers.playwright, config.MCP_SERVERS.playwright);
+});
+
+test('mergeConfig dryRun reports planned actions without writing', (t) => {
+  // Guards: --check mutating the config of a user who only wanted to inspect it.
+  const cfgPath = mergeFixture(t);
+  const before = JSON.stringify({ mcpServers: { existing: { command: 'x' } } });
+  fs.writeFileSync(cfgPath, before);
+  const result = config.mergeConfig(cfgPath, { dryRun: true });
+  assert.ok(result.writes.length > 0);
+  assert.equal(fs.readFileSync(cfgPath, 'utf8'), before);
+});
+
+test('mergeConfig writes one entry, preserves another and no-ops a third', (t) => {
+  // Guards: a real upgrade with one customized, one matching and one missing
+  // entry must report all three outcomes correctly in a single call.
+  const cfgPath = mergeFixture(t);
+  const customizedPlaywright = { command: 'npx', args: ['@playwright/mcp@9.9.9'] };
+  writeJSON(cfgPath, { mcpServers: {
+    playwright: customizedPlaywright,
+    'video-research': { ...config.MCP_SERVERS['video-research'] },
+  } });
+  const result = config.mergeConfig(cfgPath);
+  assert.deepEqual(result.writes, ['mlflow-mcp']);
+  assert.deepEqual(result.skipsMatching, ['video-research']);
+  assert.equal(result.skipsConflicting.length, 1);
+  assert.equal(result.skipsConflicting[0].name, 'playwright');
+  assert.deepEqual(config.readConfig(cfgPath).mcpServers.playwright, customizedPlaywright);
+});
+
+test('mergeConfig leaves servers it does not own untouched', (t) => {
+  // Guards: a user's own MCP server being modified by any merge path.
+  const cfgPath = mergeFixture(t);
+  const foreign = { command: 'node', args: ['my-custom-mcp.js'] };
+  writeJSON(cfgPath, { mcpServers: { 'my-custom': foreign } });
+  config.mergeConfig(cfgPath);
+  assert.deepEqual(config.readConfig(cfgPath).mcpServers['my-custom'], foreign);
+});
+
+test('entriesEqual compares command and args only, and guards nulls', () => {
+  // Guards: a false match silently overwriting a differing entry, or a false
+  // mismatch rewriting an identical entry on every install.
+  const a = { command: 'uvx', args: ['x', 'y'] };
+  assert.equal(config.entriesEqual(a, { command: 'uvx', args: ['x', 'y'] }), true);
+  assert.equal(config.entriesEqual(a, { command: 'pipx', args: ['x', 'y'] }), false);
+  assert.equal(config.entriesEqual(a, { command: 'uvx', args: ['x', 'z'] }), false);
+  assert.equal(config.entriesEqual(a, { command: 'uvx', args: ['x'] }), false);
+  assert.equal(config.entriesEqual(null, a), false);
+  assert.equal(config.entriesEqual(a, undefined), false);
+});
