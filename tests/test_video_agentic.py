@@ -324,9 +324,11 @@ class TestSdkRetries:
 
 class TestAutoDetailOnAgentic:
     async def test_agentic_segments_feed_the_high_resolution_reread(
-        self, interactions, no_metadata, tmp_path,
+        self, interactions, no_metadata, tmp_path, monkeypatch,
     ):
         # Catches: auto_detail not working on top of an agentic first pass.
+        monkeypatch.setenv("YOUTUBE_VIDEO_SOURCE", "auto")
+        cfg_mod._config = None
         interactions.return_value = _interaction({
             "title": "t",
             "detail_segments": [{"start": "07:47", "end": "08:04", "reason": "lettered notes"}],

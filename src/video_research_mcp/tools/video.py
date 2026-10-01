@@ -152,7 +152,8 @@ async def video_analyze(
         description="After the main pass, cut each returned detail_segment out of "
         "the video with ffmpeg and read it at media_resolution='high', returning "
         "verbatim on-screen text in detail_readings. Needs ffmpeg, a Gemini 3 "
-        "model and the default output schema. Costs extra only for the seconds "
+        "model and the default output schema; YouTube URLs are downloaded for "
+        "this, so it is skipped with a note when YOUTUBE_VIDEO_SOURCE=url. Costs extra only for the seconds "
         "re-read."
     )] = False,
     processing: Annotated[Literal["static", "agentic"], Field(
@@ -249,10 +250,6 @@ async def video_analyze(
             check_agentic_model(get_config().default_model)
         except ValueError as exc:
             return make_tool_error(exc)
-    elif processing != "static":
-        return make_tool_error(ValueError(
-            f"processing must be 'static' or 'agentic', got {processing!r}"
-        ))
 
     try:
         cfg = get_config()
@@ -455,10 +452,17 @@ async def _attach_detail_readings(
         return
     notes: list[str] = []
     if source_path is None and youtube_id:
-        try:
-            source_path = await download_youtube_video(youtube_id)
-        except Exception as exc:
-            notes.append(f"Could not download the video to cut clips: {exc}")
+        if get_config().youtube_video_source == "url":
+            notes.append(
+                "auto_detail needs a local copy of the video to cut clips, and "
+                "YOUTUBE_VIDEO_SOURCE=url forbids downloading. Set it to 'auto' or "
+                "'download' to enable the high-resolution re-read."
+            )
+        else:
+            try:
+                source_path = await download_youtube_video(youtube_id)
+            except Exception as exc:
+                notes.append(f"Could not download the video to cut clips: {exc}")
     if source_path is None:
         result["detail_notes"] = notes or ["No local copy of the video to cut clips from"]
         return

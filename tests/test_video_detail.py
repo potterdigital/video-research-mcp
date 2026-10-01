@@ -159,8 +159,12 @@ class TestVideoAnalyzeAutoDetail:
         result = await video_analyze(url=URL, auto_detail=True)
         assert "Gemini 3" in result["error"]
 
-    async def test_youtube_segments_are_downloaded_and_read(self, mock_gemini_client, tmp_path):
+    async def test_youtube_segments_are_downloaded_and_read(
+        self, mock_gemini_client, tmp_path, monkeypatch,
+    ):
         # Catches: auto_detail doing nothing for YouTube sources analyzed by URL.
+        monkeypatch.setenv("YOUTUBE_VIDEO_SOURCE", "auto")
+        cfg_mod._config = None
         mock_gemini_client["generate_structured"].return_value = VideoResult(
             title="t", detail_segments=[DetailSegment(start="07:47", end="08:04", reason="slide")],
         )
@@ -191,7 +195,30 @@ class TestVideoAnalyzeAutoDetail:
         dl.assert_not_awaited()
         assert result["detail_readings"] == []
 
-    async def test_download_failure_is_reported_not_raised(self, mock_gemini_client):
+    async def test_url_mode_never_downloads_for_auto_detail(self, mock_gemini_client):
+        # Catches: auto_detail downloading a YouTube video although
+        # YOUTUBE_VIDEO_SOURCE=url promises never to download (conftest sets url).
+        mock_gemini_client["generate_structured"].return_value = VideoResult(
+            title="t", detail_segments=[DetailSegment(start="01:00", end="01:10", reason="code")],
+        )
+        with (
+            patch("video_research_mcp.tools.video._youtube_metadata_pipeline",
+                  new_callable=AsyncMock, return_value=(None, None)),
+            patch("video_research_mcp.tools.video.download_youtube_video",
+                  new_callable=AsyncMock) as dl,
+            patch("video_research_mcp.tools.video.read_detail_segments",
+                  new_callable=AsyncMock) as rd,
+        ):
+            result = await video_analyze(url=URL, use_cache=False, auto_detail=True)
+        dl.assert_not_awaited()
+        rd.assert_not_awaited()
+        assert result["detail_readings"] == []
+        assert "YOUTUBE_VIDEO_SOURCE=url forbids downloading" in result["detail_notes"][0]
+        assert "detail_hint" in result
+
+    async def test_download_failure_is_reported_not_raised(self, mock_gemini_client, monkeypatch):
+        monkeypatch.setenv("YOUTUBE_VIDEO_SOURCE", "auto")
+        cfg_mod._config = None
         mock_gemini_client["generate_structured"].return_value = VideoResult(
             title="t", detail_segments=[DetailSegment(start="01:00", end="01:10", reason="code")],
         )
