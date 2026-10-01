@@ -166,6 +166,36 @@ class TestRequestShape:
         assert set(schema["$defs"]["DetailSegment"]["required"]) == {"start", "end", "reason"}
         assert "required" not in VideoResult.model_json_schema()
 
+    def test_require_all_properties_leaves_a_property_named_properties_intact(self):
+        # Catches: the walker treating a properties map as a schema because one
+        # property is literally named "properties", which injected a bogus
+        # "required" property into the caller's map.
+        schema = {
+            "type": "object",
+            "properties": {
+                "properties": {"type": "string"},
+                "required": {"type": "array", "items": {"type": "string"}},
+                "nested": {
+                    "type": "object",
+                    "properties": {"properties": {"type": "object", "properties": {"a": {"type": "string"}}}},
+                },
+                "list": {"type": "array", "items": {"anyOf": [
+                    {"type": "object", "properties": {"b": {"type": "string"}}},
+                    {"type": "null"},
+                ]}},
+            },
+        }
+        out = require_all_properties(schema)
+        assert set(out["properties"]) == {"properties", "required", "nested", "list"}
+        assert out["properties"]["properties"] == {"type": "string"}
+        assert out["required"] == ["properties", "required", "nested", "list"]
+        nested = out["properties"]["nested"]
+        assert set(nested["properties"]) == {"properties"}
+        assert nested["required"] == ["properties"]
+        assert nested["properties"]["properties"]["required"] == ["a"]
+        assert out["properties"]["list"]["items"]["anyOf"][0]["required"] == ["b"]
+        assert "required" not in schema  # input not mutated
+
 
 class TestYouTubeSource:
     async def test_youtube_url_is_the_agentic_uri(self, interactions, monkeypatch):

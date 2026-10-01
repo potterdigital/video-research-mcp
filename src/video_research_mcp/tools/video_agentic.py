@@ -59,26 +59,52 @@ def check_agentic_model(model: str) -> None:
         )
 
 
+_SCHEMA_KEYWORDS = ("items", "additionalProperties", "not")
+_SCHEMA_LIST_KEYWORDS = ("prefixItems", "anyOf", "oneOf", "allOf")
+_SCHEMA_MAP_KEYWORDS = ("$defs", "definitions")
+
+
+def _is_object_schema(node: dict) -> bool:
+    kind = node.get("type")
+    if isinstance(kind, list):
+        return "object" in kind
+    return kind in (None, "object") and isinstance(node.get("properties"), dict)
+
+
 def require_all_properties(schema: dict) -> dict:
     """Return a copy of ``schema`` where every object lists all its properties as required.
 
-    Measured on gemini-3.8-flash: through the Interactions API the model
-    omits optional properties of the VideoResult schema (a 19 s clip came back
-    with only ``title`` and ``topics``), while the same schema on
-    generateContent is filled in. Marking every property required restores
-    full results; fields can still be empty strings or lists.
+    Google's structured-output docs define ``required`` as "An array of
+    strings, listing which properties are mandatory", so any property left
+    out of it is optional and the model may omit it. Through the Interactions
+    API it does: the default VideoResult schema declares no ``required``, and
+    agentic runs came back with only some fields. Marking every property
+    required asks for all of them; values can still be empty strings or lists.
+
+    Only nodes in schema position are touched (the root, property values,
+    ``items``, ``anyOf`` members, ``$defs`` entries and similar), so a
+    property that is itself named ``properties`` or ``required`` is left as is.
+    Applied to the server's default schema only; a caller's ``output_schema``
+    is sent unchanged.
     """
     out = copy.deepcopy(schema)
 
     def walk(node) -> None:
-        if isinstance(node, dict):
-            if isinstance(node.get("properties"), dict):
-                node["required"] = list(node["properties"])
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
+        if not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict) and _is_object_schema(node):
+            node["required"] = list(properties)
+            for child in properties.values():
+                walk(child)
+        for key in _SCHEMA_KEYWORDS:
+            walk(node.get(key))
+        for key in _SCHEMA_LIST_KEYWORDS:
+            for child in node.get(key) or []:
+                walk(child)
+        for key in _SCHEMA_MAP_KEYWORDS:
+            for child in (node.get(key) or {}).values():
+                walk(child)
 
     walk(out)
     return out

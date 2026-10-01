@@ -135,7 +135,10 @@ async def video_analyze(
     )] = "Provide a comprehensive analysis of this video.",
     output_schema: Annotated[dict | None, Field(
         description="Optional JSON Schema for the response. "
-        "If omitted, uses default VideoResult schema."
+        "If omitted, uses default VideoResult schema. With processing='agentic', "
+        "properties not listed in the schema's 'required' may be left out of the "
+        "result (Gemini structured output treats them as optional), so list "
+        "every field you need under 'required'."
     )] = None,
     thinking_level: ThinkingLevel = "high",
     use_cache: Annotated[bool, Field(description="Use cached results")] = True,
@@ -162,7 +165,9 @@ async def video_analyze(
         "transcript, frames or audio it needs: far fewer tokens and faster on long "
         "videos. Agentic needs gemini-3.8/3.7/3.6-flash or gemini-3.5-flash-lite, "
         "always uploads local files, and does not accept start_offset, end_offset, "
-        "fps or strict_contract. Combines with media_resolution and auto_detail."
+        "fps or strict_contract. Combines with media_resolution and auto_detail. "
+        "With a custom output_schema, optional properties may be omitted: put "
+        "every field you need under 'required'."
     )] = "static",
 ) -> dict:
     """Analyze a video (YouTube URL or local file) with any instruction.
