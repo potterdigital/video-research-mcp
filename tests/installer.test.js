@@ -30,7 +30,8 @@ test('global registration uses Claude user scope and preserves user configuratio
     projects: { '/other/project': { hasTrustDialogAccepted: true } },
     mcpServers: {
       personal: { command: 'my-server' },
-      'video-research': { command: 'uvx', args: ['old'], env: { GEMINI_MODEL: 'custom' } },
+      // The v0.7.0 installer default, so an upgrade must refresh it.
+      'video-research': { command: 'uvx', args: ['video-research-mcp[tracing]'], env: { GEMINI_MODEL: 'custom' } },
       'video-agent': { command: 'uv', args: ['run', 'video-agent-mcp'] },
     },
   }));
@@ -40,12 +41,25 @@ test('global registration uses Claude user scope and preserves user configuratio
   assert.equal(installed.projects['/other/project'].hasTrustDialogAccepted, true);
   assert.deepEqual(installed.mcpServers.personal, { command: 'my-server' });
   assert.equal(installed.mcpServers['video-research'].env.GEMINI_MODEL, 'custom');
-  // A customized command/args entry is preserved by default (see
-  // tests/installer/test_config_merge.js); --force-mcp-overwrite resets it.
-  assert.deepEqual(installed.mcpServers['video-research'].args, ['old']);
-  assert.match(result.stdout + result.stderr, /Preserved existing 'video-research' entry/);
+  assert.deepEqual(installed.mcpServers['video-research'].args, config.MCP_SERVERS['video-research'].args);
+  assert.doesNotMatch(result.stdout + result.stderr, /Preserved existing 'video-research' entry/);
   assert.equal(installed.mcpServers['video-agent'].command, 'uv');
   assert.equal(fs.existsSync(path.join(home, '.claude/.mcp.json')), false);
+});
+
+test('global install preserves a user-edited entry and warns', (t) => {
+  // Guards: an upgrade silently replacing command/args the user chose
+  // (args that match no installer default, current or previous).
+  const home = fixture(t);
+  const configPath = path.join(home, '.claude.json');
+  fs.writeFileSync(configPath, JSON.stringify({ mcpServers: {
+    'video-research': { command: 'uvx', args: ['old'], env: { GEMINI_MODEL: 'custom' } },
+  } }));
+  const result = runInstaller(home, '--global');
+  assert.equal(result.status, 0, result.stderr);
+  const installed = JSON.parse(fs.readFileSync(configPath));
+  assert.deepEqual(installed.mcpServers['video-research'].args, ['old']);
+  assert.match(result.stdout + result.stderr, /Preserved existing 'video-research' entry/);
 });
 
 test('force-mcp-overwrite resets installer args and keeps user env', (t) => {
@@ -249,6 +263,40 @@ test('mergeConfig preserves a user-customized playwright entry by default', (t) 
   assert.equal(result.skipsConflicting.length, 1);
   assert.equal(result.skipsConflicting[0].name, 'playwright');
   assert.deepEqual(config.readConfig(cfgPath).mcpServers.playwright, userEntry);
+});
+
+test('mergeConfig refreshes every previous installer default', (t) => {
+  // Guards: users stranded on an old installer default (for example
+  // @playwright/mcp@0.0.68 or an unrefreshed video-research-mcp) because the
+  // preserve rule mistook the installer's own earlier entry for a user edit.
+  for (const [name, olds] of Object.entries(config.PREVIOUS_DEFAULTS)) {
+    assert.ok(config.MCP_SERVERS[name], `${name} must be a current server`);
+    for (const old of olds) {
+      assert.equal(config.entriesEqual(old, config.MCP_SERVERS[name]), false,
+        `${name}: a previous default must differ from the current one`);
+      const cfgPath = mergeFixture(t);
+      writeJSON(cfgPath, { mcpServers: { [name]: { ...old, env: { KEEP: '1' } } } });
+      const result = config.mergeConfig(cfgPath);
+      assert.ok(result.writes.includes(name), `${name} ${old.args.join(' ')} not refreshed`);
+      assert.deepEqual(result.skipsConflicting, []);
+      const entry = config.readConfig(cfgPath).mcpServers[name];
+      assert.equal(entry.command, config.MCP_SERVERS[name].command);
+      assert.deepEqual(entry.args, config.MCP_SERVERS[name].args);
+      assert.deepEqual(entry.env, { KEEP: '1' });
+    }
+  }
+});
+
+test('mergeConfig refreshes the v0.7.0 playwright pin', (t) => {
+  // Guards: the concrete v0.7.1 upgrade (0.0.68 to 0.0.83) regressing if
+  // PREVIOUS_DEFAULTS loses that row.
+  const cfgPath = mergeFixture(t);
+  writeJSON(cfgPath, { mcpServers: { playwright: {
+    command: 'npx', args: ['@playwright/mcp@0.0.68', '--headless', '--caps=vision,pdf'],
+  } } });
+  const result = config.mergeConfig(cfgPath);
+  assert.deepEqual(result.writes.includes('playwright'), true);
+  assert.deepEqual(config.readConfig(cfgPath).mcpServers.playwright, config.MCP_SERVERS.playwright);
 });
 
 test('mergeConfig forceOverwrite replaces user command and args', (t) => {

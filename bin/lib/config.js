@@ -52,6 +52,39 @@ function getConfigPath(mode) {
   return path.join(process.cwd(), '.mcp.json');
 }
 
+/**
+ * Every earlier installer default for each server in MCP_SERVERS, as
+ * ``command`` + ``args``. An entry equal to one of these was written by an
+ * older installer, not by the user, so mergeConfig() refreshes it to the
+ * current default instead of preserving it.
+ *
+ * Derived from upstream history with
+ * ``git log -p upstream/main -- bin/lib/config.js`` (the defaults have lived
+ * in this file since the installer was added in 8f90c2f), collecting each
+ * distinct MCP_SERVERS value that differs from today's:
+ *   - video-research: ['video-research-mcp'] (3a49ee1 to 8d6410e),
+ *     ['video-research-mcp[tracing]'] (07ac52d to ca4bcc6)
+ *   - playwright: '@playwright/mcp@latest' (8f90c2f to 4f34f1a),
+ *     '@playwright/mcp@0.0.68' (8cb4801 to ca4bcc6)
+ *   - mlflow-mcp: 'mlflow[mcp]>=3.5.1' (07ac52d to ca4bcc6)
+ * The current values arrived in 6560492 (v0.7.1). 'gemini-research' (the
+ * pre-rename server) is not in MCP_SERVERS, so it is never touched.
+ * When a default in MCP_SERVERS changes, append the old value here.
+ */
+const PREVIOUS_DEFAULTS = {
+  'video-research': [
+    { command: 'uvx', args: ['video-research-mcp'] },
+    { command: 'uvx', args: ['video-research-mcp[tracing]'] },
+  ],
+  playwright: [
+    { command: 'npx', args: ['@playwright/mcp@latest', '--headless', '--caps=vision,pdf'] },
+    { command: 'npx', args: ['@playwright/mcp@0.0.68', '--headless', '--caps=vision,pdf'] },
+  ],
+  'mlflow-mcp': [
+    { command: 'uvx', args: ['--with', 'mlflow[mcp]>=3.5.1', 'mlflow', 'mcp', 'run'] },
+  ],
+};
+
 /** Read and parse a JSON config file. Returns null if not found. Throws on malformed JSON. */
 function readConfig(configPath) {
   try {
@@ -78,12 +111,20 @@ function entriesEqual(a, b) {
   return aArgs.every((v, i) => v === bArgs[i]);
 }
 
+/** True when ``entry`` equals an earlier installer default for ``name``. */
+function isPreviousDefault(name, entry) {
+  return (PREVIOUS_DEFAULTS[name] || []).some((old) => entriesEqual(entry, old));
+}
+
 /**
  * Merge MCP_SERVERS into the config file.
  *
- * Existing user-configured entries are preserved by default: the installer
- * only writes a server entry when it is absent or matches the planned values
- * exactly. Pass ``forceOverwrite: true`` (mapped to the ``--force-mcp-overwrite``
+ * An entry the installer owns (absent, or equal to a current or earlier
+ * installer default in PREVIOUS_DEFAULTS) is written or refreshed, so
+ * upgrades still move users off stale defaults. An entry whose command or
+ * args match no installer default was edited by the user and is preserved,
+ * with a warning from the caller. Refreshes keep other keys on the entry
+ * (``env`` etc.). Pass ``forceOverwrite: true`` (mapped to the ``--force-mcp-overwrite``
  * CLI flag) to reset ``command`` and ``args`` of known entries to the installer
  * defaults; other keys on the entry (``env`` etc.) are kept.
  *
@@ -107,7 +148,7 @@ function mergeConfig(configPath, options = {}) {
     if (!current) {
       existing.mcpServers[name] = config;
       writes.push(name);
-    } else if (forceOverwrite) {
+    } else if (forceOverwrite || isPreviousDefault(name, current)) {
       // Installer-managed keys (command, args) win; any other keys the user
       // added to the entry (env, etc.) are kept.
       existing.mcpServers[name] = { ...current, ...config };
@@ -271,6 +312,7 @@ function ensureEnvFile() {
 
 module.exports = {
   MCP_SERVERS,
+  PREVIOUS_DEFAULTS,
   DEPRECATED_SERVERS,
   getConfigPath,
   readConfig,
