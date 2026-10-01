@@ -11,6 +11,8 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `auto_detail` on `video_analyze`: after the main pass, each `detail_segments` range is padded, cut locally with ffmpeg, and read at `media_resolution="high"`; verbatim on-screen text is returned in `detail_readings`. Clips under 15 MB are sent inline, so the full video is not uploaded for the re-read.
+
 - `media_resolution` (`low` / `high`), `start_offset`, `end_offset` and `fps` on `video_analyze`; `media_resolution` and `fps` on `video_batch_analyze`. The server previously never set a media resolution, so every frame was read at the API default.
 - `detail_segments` in the default `video_analyze` result: time ranges where on-screen text may not be fully legible at the resolution used, with a `detail_hint` when the call ran below `high`. Intended for a cheap whole-video pass followed by `high` on just those ranges.
 - `VIDEO_MEDIA_RESOLUTION`, `YOUTUBE_VIDEO_SOURCE` and `YOUTUBE_MAX_HEIGHT` settings.

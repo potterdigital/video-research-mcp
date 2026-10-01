@@ -34,6 +34,7 @@ from .video_url import (
     _video_content,
 )
 from .youtube_download import download_youtube_video
+from .video_detail import read_detail_segments
 from .video_options import (
     FpsParam,
     MediaResolutionParam,
@@ -141,6 +142,13 @@ async def video_analyze(
     start_offset: OffsetParam = None,
     end_offset: OffsetParam = None,
     fps: FpsParam = None,
+    auto_detail: Annotated[bool, Field(
+        description="After the main pass, cut each returned detail_segment out of "
+        "the video with ffmpeg and read it at media_resolution='high', returning "
+        "verbatim on-screen text in detail_readings. Needs ffmpeg, a Gemini 3 "
+        "model and the default output schema. Costs extra only for the seconds "
+        "re-read."
+    )] = False,
 ) -> dict:
     """Analyze a video (YouTube URL or local file) with any instruction.
 
@@ -197,6 +205,12 @@ async def video_analyze(
     except ValueError as exc:
         return make_tool_error(exc)
 
+    if auto_detail and (output_schema is not None or strict_contract):
+        return make_tool_error(ValueError(
+            "auto_detail needs the default output schema: it reads the detail_segments "
+            "field, which custom output_schema and strict_contract results do not carry."
+        ))
+
     try:
         cfg = get_config()
         options = resolve_options(
@@ -204,6 +218,12 @@ async def video_analyze(
             default_resolution=cfg.video_media_resolution,
             model=cfg.default_model,
         )
+        if auto_detail:
+            # Validates that 'high' is available on the configured model.
+            resolve_options(
+                "high", None, None, None,
+                default_resolution=cfg.video_media_resolution, model=cfg.default_model,
+            )
     except ValueError as exc:
         return make_tool_error(exc)
 
@@ -304,7 +324,20 @@ async def video_analyze(
             cache_instruction=instruction + cache_key_suffix(applied, source_mode),
         )
         _annotate(result)
-        if result.get("detail_segments") and applied["media_resolution"] != "high":
+        if auto_detail:
+            await _attach_detail_readings(
+                result,
+                source_path=Path(local_filepath) if local_filepath else None,
+                content_id=content_id,
+                youtube_id=content_id if url else None,
+                instruction=instruction,
+                use_cache=use_cache,
+            )
+        if (
+            result.get("detail_segments")
+            and applied["media_resolution"] != "high"
+            and not any("on_screen_text" in r for r in result.get("detail_readings", []))
+        ):
             result["detail_hint"] = (
                 "On-screen detail in detail_segments may not be fully legible at this "
                 "resolution. Re-run with media_resolution='high' and start_offset/end_offset "
@@ -328,6 +361,45 @@ async def video_analyze(
         return make_tool_error(exc)
     except Exception as exc:
         return make_tool_error(exc)
+
+
+async def _attach_detail_readings(
+    result: dict,
+    *,
+    source_path: Path | None,
+    content_id: str,
+    youtube_id: str | None,
+    instruction: str,
+    use_cache: bool,
+) -> None:
+    """Re-read the result's detail_segments at high resolution from local clips.
+
+    Adds ``detail_readings`` (one entry per clip) and, when anything was
+    skipped or failed before reading, ``detail_notes``.
+    """
+    segments = result.get("detail_segments") or []
+    result["detail_readings"] = []
+    if not segments:
+        return
+    notes: list[str] = []
+    if source_path is None and youtube_id:
+        try:
+            source_path = await download_youtube_video(youtube_id)
+        except Exception as exc:
+            notes.append(f"Could not download the video to cut clips: {exc}")
+    if source_path is None:
+        result["detail_notes"] = notes or ["No local copy of the video to cut clips from"]
+        return
+    readings, plan_notes = await read_detail_segments(
+        source_path,
+        segments,
+        content_id=content_id,
+        instruction=instruction,
+        use_cache=use_cache,
+    )
+    result["detail_readings"] = readings
+    if notes or plan_notes:
+        result["detail_notes"] = notes + plan_notes
 
 
 async def _download_and_cache(
