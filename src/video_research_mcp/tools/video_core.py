@@ -11,6 +11,7 @@ from ..cache import load as cache_load, save as cache_save
 from ..client import GeminiClient
 from ..config import get_config
 from ..models.video import VideoResult
+from .video_agentic import generate_agentic, require_all_properties
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,16 @@ _ANALYSIS_PREAMBLE = (
     "what is legible, and list every range where small text, code, numbers "
     "or UI detail matters but is not fully legible in detail_segments."
 )
+
+
+def build_analysis_prompt(instruction: str, metadata_context: str | None = None) -> str:
+    """Prompt text for the default VideoResult schema: preamble, metadata, instruction."""
+    if metadata_context:
+        return (
+            f"{_ANALYSIS_PREAMBLE}\n\n{metadata_context}\n\n"
+            f"User instruction: {instruction}"
+        )
+    return f"{_ANALYSIS_PREAMBLE}\n\nUser instruction: {instruction}"
 
 
 def _enrich_prompt(contents: types.Content, new_text: str) -> types.Content:
@@ -40,7 +51,7 @@ def _enrich_prompt(contents: types.Content, new_text: str) -> types.Content:
 
 
 async def analyze_video(
-    contents: types.Content,
+    contents: types.Content | None,
     *,
     instruction: str,
     content_id: str,
@@ -52,6 +63,7 @@ async def analyze_video(
     local_filepath: str = "",
     screenshot_dir: str = "",
     cache_instruction: str | None = None,
+    agentic_video: dict | None = None,
 ) -> dict:
     """Run the video analysis pipeline shared by video_analyze and video_batch_analyze.
 
@@ -69,6 +81,10 @@ async def analyze_video(
         cache_instruction: Cache key text when it must differ from the prompt
             instruction (e.g. instruction plus video options). Defaults to
             ``instruction``.
+        agentic_video: Interactions video block with ``processing="agentic"``.
+            When set, ``contents`` is ignored and the call goes through the
+            Interactions API with the same prompt text and schema; the result
+            gains ``usage`` (token totals) unless it came from the cache.
 
     Returns:
         Dict matching VideoResult schema (default) or the custom output_schema.
@@ -82,27 +98,28 @@ async def analyze_video(
             cached["cached"] = True
             return cached
 
-    if output_schema:
+    usage: dict | None = None
+    if agentic_video is not None:
+        text = instruction if output_schema else build_analysis_prompt(instruction, metadata_context)
+        raw, usage = await generate_agentic(
+            agentic_video,
+            text,
+            schema=output_schema or require_all_properties(VideoResult.model_json_schema()),
+            thinking_level=thinking_level,
+        )
+        if output_schema:
+            result = _parse_custom(raw)
+        else:
+            result = VideoResult.model_validate_json(raw).model_dump(mode="json")
+    elif output_schema:
         raw = await GeminiClient.generate(
             contents,
             thinking_level=thinking_level,
             response_schema=output_schema,
         )
-        try:
-            result = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Gemini returned non-JSON for custom schema: {raw[:200]!r}"
-            ) from exc
+        result = _parse_custom(raw)
     else:
-        if metadata_context:
-            enriched = (
-                f"{_ANALYSIS_PREAMBLE}\n\n{metadata_context}\n\n"
-                f"User instruction: {instruction}"
-            )
-        else:
-            enriched = f"{_ANALYSIS_PREAMBLE}\n\nUser instruction: {instruction}"
-        contents = _enrich_prompt(contents, enriched)
+        contents = _enrich_prompt(contents, build_analysis_prompt(instruction, metadata_context))
         model_result = await GeminiClient.generate_structured(
             contents,
             schema=VideoResult,
@@ -125,4 +142,16 @@ async def analyze_video(
     await extract_and_store_graph(
         result, source_label, source_tool="video_analyze", source_category="video",
     )
+    if usage is not None:
+        # Added after the cache save: a cache hit spends no tokens.
+        result["usage"] = usage
     return result
+
+
+def _parse_custom(raw: str) -> dict:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Gemini returned non-JSON for custom schema: {raw[:200]!r}"
+        ) from exc

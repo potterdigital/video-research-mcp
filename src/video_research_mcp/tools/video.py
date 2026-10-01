@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -27,7 +27,13 @@ from ..types import ThinkingLevel, VideoFilePath, YouTubeUrl, coerce_json_param
 from ..youtube import YouTubeClient
 from .video_cache import ensure_session_cache, prewarm_cache, prepare_cached_request
 from .video_core import analyze_video
-from .video_file import _upload_large_file, _video_file_content, _video_file_uri
+from .video_agentic import agentic_video_block, check_agentic_model
+from .video_file import (
+    _upload_large_file,
+    _video_file_content,
+    _video_file_uri,
+    _video_mime_type,
+)
 from .video_url import (
     _extract_video_id,
     _normalize_youtube_url,
@@ -149,6 +155,14 @@ async def video_analyze(
         "model and the default output schema. Costs extra only for the seconds "
         "re-read."
     )] = False,
+    processing: Annotated[Literal["static", "agentic"], Field(
+        description="'static' (default) samples the whole video at a fixed frame "
+        "rate. 'agentic' lets Gemini navigate the timeline and load only the "
+        "transcript, frames or audio it needs: far fewer tokens and faster on long "
+        "videos. Agentic needs gemini-3.8/3.7/3.6-flash or gemini-3.5-flash-lite, "
+        "always uploads local files, and does not accept start_offset, end_offset, "
+        "fps or strict_contract. Combines with media_resolution and auto_detail."
+    )] = "static",
 ) -> dict:
     """Analyze a video (YouTube URL or local file) with any instruction.
 
@@ -179,6 +193,8 @@ async def video_analyze(
         start_offset: Clip start ('90', '1:30', '01:01:30').
         end_offset: Clip end.
         fps: Frames sampled per second.
+        auto_detail: Re-read detail_segments at high resolution from local clips.
+        processing: 'static' or 'agentic' video processing.
 
     Returns:
         Dict matching VideoResult schema (default), custom output_schema,
@@ -211,6 +227,33 @@ async def video_analyze(
             "field, which custom output_schema and strict_contract results do not carry."
         ))
 
+    agentic = processing == "agentic"
+    if agentic:
+        unsupported = [
+            name for name, value in (
+                ("start_offset", start_offset), ("end_offset", end_offset), ("fps", fps),
+            ) if value is not None
+        ]
+        if unsupported:
+            return make_tool_error(ValueError(
+                f"processing='agentic' does not accept {', '.join(unsupported)}: Gemini "
+                "supports clipping and fps only in static processing. Omit them, or use "
+                "processing='static'."
+            ))
+        if strict_contract:
+            return make_tool_error(ValueError(
+                "processing='agentic' does not support strict_contract: the strict "
+                "pipeline runs on static generateContent requests. Use processing='static'."
+            ))
+        try:
+            check_agentic_model(get_config().default_model)
+        except ValueError as exc:
+            return make_tool_error(exc)
+    elif processing != "static":
+        return make_tool_error(ValueError(
+            f"processing must be 'static' or 'agentic', got {processing!r}"
+        ))
+
     try:
         cfg = get_config()
         options = resolve_options(
@@ -234,6 +277,7 @@ async def video_analyze(
         source_warning = ""
         file_uri = ""
         applied = options
+        agentic_video: dict | None = None
         if url:
             clean_url = _normalize_youtube_url(url)
             content_id = _extract_video_id(url)
@@ -280,9 +324,32 @@ async def video_analyze(
                     f"{source_warning} media_resolution='high' was not applied: Gemini "
                     "ignores it on YouTube URL parts, so this ran at the default resolution."
                 ).strip()
-            contents = apply_video_options(
-                _video_content(video_uri, instruction), applied, fps_fallback=fps_override
+            if agentic:
+                # A YouTube URL works as the agentic uri (verified live); fps
+                # from metadata is a static-only setting, so it is dropped.
+                contents = None
+                agentic_video = agentic_video_block(
+                    video_uri,
+                    mime_type="video/mp4" if file_uri else "",
+                    resolution=applied["media_resolution"],
+                )
+            else:
+                contents = apply_video_options(
+                    _video_content(video_uri, instruction), applied, fps_fallback=fps_override
+                )
+        elif agentic:
+            # Agentic is documented with File API uploads only, so local
+            # files are always uploaded, even under the inline-size threshold.
+            file_uri, content_id = await _video_file_uri(file_path)
+            contents = None
+            agentic_video = agentic_video_block(
+                file_uri,
+                mime_type=_video_mime_type(Path(file_path)),
+                resolution=options["media_resolution"],
             )
+            source_label = file_path
+            local_filepath = str(Path(file_path).expanduser().resolve())
+            source_mode = "local_file"
         else:
             contents, content_id, file_uri = await _video_file_content(file_path, instruction)
             contents = apply_video_options(contents, options)
@@ -295,6 +362,8 @@ async def video_analyze(
             result["screenshot_dir"] = screenshot_dir
             result["video_source"] = source_mode
             result["video_options"] = applied
+            if agentic:
+                result["processing"] = "agentic"
             if source_warning:
                 result["video_source_warning"] = source_warning
             return result
@@ -321,7 +390,9 @@ async def video_analyze(
             metadata_context=metadata_context,
             local_filepath=local_filepath,
             screenshot_dir=screenshot_dir,
-            cache_instruction=instruction + cache_key_suffix(applied, source_mode),
+            cache_instruction=instruction + cache_key_suffix(applied, source_mode)
+            + ("\n[processing=agentic]" if agentic else ""),
+            agentic_video=agentic_video,
         )
         _annotate(result)
         if auto_detail:
@@ -347,7 +418,8 @@ async def video_analyze(
         # Pre-warm the session context cache for whole-video, default-option
         # requests only, as before: YouTube URLs are skipped by prewarm_cache,
         # and a clipped or high-detail part must not become the session cache.
-        is_default = applied["media_resolution"] == "low" and not (
+        # Agentic runs never prewarm: the session cache serves static requests.
+        is_default = not agentic and applied["media_resolution"] == "low" and not (
             applied["start_offset"] or applied["end_offset"] or applied["fps"] is not None
         )
         if content_id and is_default:
